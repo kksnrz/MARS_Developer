@@ -7,7 +7,7 @@ To set up your GPU to run tensorflow, follow the "Setting up your GPU for Tensor
 
 Next, clone this Github repository + submodules with the call
 ```
-git clone --recurse-submodules https://github.com/neuroethology/MARS_Developer
+git clone --recurse-submodules https://github.com/kksnrz/MARS_Developer
 ```
 
 Navigate into the MARS_Developer directory you just created, and install the conda environment:
