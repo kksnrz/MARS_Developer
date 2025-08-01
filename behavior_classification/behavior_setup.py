@@ -356,6 +356,77 @@ def prep_behavior_data(project, val=0.1, test=0.2, reshuffle=True, do_bar=False,
     summarize_annotation_split(project, do_bar=do_bar)
 
 
+def prep_behavior_data_according_to_paper(project, train_dir=[], val_dir=[], test_dir=[], do_bar=False, drop_label=''):
+    """
+    Split behavior videos into train, val, and test sets based on given directories, like in the paper.
+    If drop_label is set, frames with that label (e.g., 'mount' or 'omit') are removed. Saves the split and shows a summary.
+    """
+
+    config_fid = os.path.join(project, 'project_config.yaml')
+    with open(config_fid, encoding='utf-8') as f:
+        cfg = yaml.load(f, Loader=yaml.FullLoader)
+
+    video_path = os.path.join(project, 'behavior', 'behavior_data')
+    video_list, _, _ = find_videos(video_path, cfg['video_formats'])
+
+    def collect_video_keys(dirs):
+        vids = set()
+        for d in dirs:
+            temp, _, _ = find_videos(d, cfg['video_formats'])
+            vids.update(temp.keys())
+        return vids
+
+    train_set = collect_video_keys(train_dir)
+    val_set = collect_video_keys(val_dir)
+    test_set = collect_video_keys(test_dir)
+
+    assignments = {'train': {}, 'val': {}, 'test': {}}
+
+
+    anno_dict_cache = {}
+
+    # parses all unique annotations files
+    for video, vinfo in video_list.items():
+        # vinfo is path to annotation (.annot) + pose (.json) files
+        anno = vinfo['anno']
+        if anno not in anno_dict_cache:
+            anno_dict_cache[anno] = map.parse_annotations(anno, omit_channels=['intruder', 'stim'])
+        video_list[video]['anno_dict'] = anno_dict_cache[anno]
+    
+    # use parsed annot to determine the number of frames
+    for video, vinfo in video_list.items():
+        anno_dict = vinfo['anno_dict'] # parsed annotations dictionary for each video
+        behs_frame = anno_dict['behs_frame'] # labels of each frame fo each video
+        if drop_label:
+            keep_frames = [i for i, j in enumerate(behs_frame) if j != drop_label]
+        else:
+            keep_frames = list(range(len(behs_frame)))
+
+        entry = {
+            'video': video,
+            'anno': vinfo['anno'],
+            'pose': vinfo['pose'],
+            'feat': vinfo['feat'],
+            'keep_frames': keep_frames
+        }
+
+        if video in val_set:
+            addtoset(assignments['val'], str(Path(video).stem), entry)
+        elif video in test_set:
+            addtoset(assignments['test'], str(Path(video).stem), entry)
+        elif not train_set or video in train_set:
+            addtoset(assignments['train'], str(Path(video).stem), entry)
+
+    output_dir = os.path.join(project, 'behavior', 'behavior_jsons')
+    if not os.path.exists(output_dir):
+        os.mkdir(output_dir)
+
+    with open(os.path.join(output_dir, 'train_test_split.json'), 'w', encoding='utf-8') as f:
+        json.dump(assignments, f)
+
+    summarize_annotation_split(project, do_bar=do_bar)
+
+
 def apply_clf_splits(project):
     splitfile = os.path.join(project, 'behavior', 'behavior_jsons', 'train_test_split.json')
     if not os.path.exists(splitfile):
@@ -381,6 +452,7 @@ def apply_clf_splits(project):
         savedata = {'vocabulary': beh_dict, 'sequences': {cfg['project_name']: {}}}
         keylist = list(assignments[key].keys())
         for k in keylist:
+            # TODO: clean video files as frames do not match annotations
             anno_dict = map.parse_annotations(assignments[key][k][0]['anno'], omit_channels=['intruder', 'stim'])
             annotations = [beh_dict[b] for b in anno_dict['behs_frame']]
             with open(assignments[key][k][0]['pose']) as f:
