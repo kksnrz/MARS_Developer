@@ -406,7 +406,6 @@ def prep_behavior_data_according_to_paper(project, train_dir=[], val_dir=[], tes
             'video': video,
             'anno': vinfo['anno'],
             'pose': vinfo['pose'],
-            'feat': vinfo['feat'],
             'keep_frames': keep_frames
         }
 
