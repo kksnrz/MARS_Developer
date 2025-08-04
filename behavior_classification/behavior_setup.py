@@ -388,11 +388,12 @@ def prep_behavior_data_according_to_paper(project, train_dir=[], val_dir=[], tes
     # parses all unique annotations files
     for video, vinfo in video_list.items():
         # vinfo is path to annotation (.annot) + pose (.json) files
-        anno = vinfo['anno']
-        if anno not in anno_dict_cache:
-            anno_dict_cache[anno] = map.parse_annotations(anno, omit_channels=['intruder', 'stim'])
-        video_list[video]['anno_dict'] = anno_dict_cache[anno]
-    
+        anno_file = vinfo['anno']
+        if anno_file not in anno_dict_cache:
+            anno_dict_cache[anno_file] = map.parse_annotations(anno_file,
+                                                               omit_channels=['intruder', 'stim'])
+        video_list[video]['anno_dict'] = anno_dict_cache[anno_file]
+
     # use parsed annot to determine the number of frames
     for video, vinfo in video_list.items():
         anno_dict = vinfo['anno_dict'] # parsed annotations dictionary for each video
@@ -432,10 +433,10 @@ def apply_clf_splits(project):
         print('apply_clf_splits failed, please run prep_behavior_data first.')
         return
     config_fid = os.path.join(project, 'project_config.yaml')
-    with open(config_fid) as f:
+    with open(config_fid, encoding='utf-8') as f:
         cfg = yaml.load(f, Loader=yaml.FullLoader)
 
-    with open(splitfile) as f:
+    with open(splitfile, encoding='utf-8') as f:
         assignments = json.load(f)
 
     behs = []
@@ -451,12 +452,14 @@ def apply_clf_splits(project):
         savedata = {'vocabulary': beh_dict, 'sequences': {cfg['project_name']: {}}}
         keylist = list(assignments[key].keys())
         for k in keylist:
-            # TODO: clean video files as frames do not match annotations
-            anno_dict = map.parse_annotations(assignments[key][k][0]['anno'], omit_channels=['intruder', 'stim'])
+            anno_dict = map.parse_annotations(assignments[key][k][0]['anno'],
+                                              omit_channels=['intruder', 'stim'])
             annotations = [beh_dict[b] for b in anno_dict['behs_frame']]
-            with open(assignments[key][k][0]['pose']) as f:
+            with open(assignments[key][k][0]['pose'], encoding='utf-8') as f:
                 posedata = json.load(f)
             for entry in assignments[key][k]:
+                if entry['keep_frames'][-1] > len(posedata['keypoints']) - 1:
+                    entry['keep_frames'] = entry['keep_frames'][:len(posedata['keypoints'])]
                 indices = entry['keep_frames']
                 saveentry = {'keypoints': [posedata['keypoints'][i] for i in indices],
                          'bbox': [posedata['bbox'][i] for i in indices],
@@ -465,7 +468,11 @@ def apply_clf_splits(project):
                          'metadata': entry}
                 addtoset(savedata['sequences'][cfg['project_name']], k, saveentry)
 
-        with open(os.path.join(project, 'behavior', 'behavior_jsons', key + '_data.json'), 'w') as f:
+        with open(os.path.join(project,
+                               'behavior',
+                               'behavior_jsons',
+                               key + '_data.json'),
+                               'w', encoding='utf-8') as f:
             json.dump(savedata, f)
 
 
