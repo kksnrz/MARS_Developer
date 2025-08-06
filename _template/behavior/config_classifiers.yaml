@@ -9,5 +9,5 @@ do_wnd: True  # JAABA-style windowing of features
 windows: [0.033333, 0.16667, 0.33333]  # windows for JAABA-style windowing (seconds)
 do_cwt: False  # Gabor wavelet transform of features
 scales: [0.033333, 0.01, 0.16667, 0.33333, 1, 2, 9]  # 1/frequency for wavelets (seconds)
-early_stopping: 20  # rounds after which to stop training if loss fails to improve. set this to zero to turn off early stopping
+early_stopping: 50  # rounds after which to stop training if loss fails to improve. set this to zero to turn off early stopping
 verbose: True

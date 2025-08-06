@@ -9,15 +9,28 @@ mlp_defaults:
   random_state: 1
 
 xgb_defaults:
-  n_estimators: 2000
-  eta: 0.1
-  max_depth': 9
-  gamma': 1
-  min_child_weight': 4
-  subsample': 0.8
-  scale_pos_weight': 1
-  colsample_bytree': 0.8
-  max_bin': 256
-  tree_method': 'hist'
-  silent': 1
-  seed': 33
+  # Standard XGBClassifier values
+  base_score: 0.5 # default XGBClassifier value
+  booster: 'gbtree' # default XGBClassifier value
+  colsample_bylevel: 1 # default XGBClassifier value
+  colsample_bynode: 1 # default XGBClassifier value
+  colsample_bytree: 0.8 # default 1
+  gamma: 1 # default 0
+  learning_rate: 0.1 # default XGBClassifier value
+  max_delta_step: 0 # default XGBClassifier value
+  max_depth: 3 # default XGBClassifier value MARS_Developer clf_defaults.yaml = 9
+  min_child_weight: 1 # default XGBClassifier value MARS_Developer clf_defaults.yaml = 4
+  missing: None # default XGBClassifier value
+  n_estimators: 2000 # default 100
+  nthread: -1 # default 1
+  objective: 'binary:logistic' # default XGBClassifier value
+  reg_alpha: 0 # default XGBClassifier value
+  reg_lambda: 1 # default XGBClassifier value
+  scale_pos_weight: 1 # default XGBClassifier value
+  seed: 33 # default 0
+  subsample: 0.8 # default 1
+  verbosity: 2 # default 1
+  # extra parameters
+  tree_method: 'hist' # default 'auto'
+  max_bin: 256 # default xgboost value 
+  random_state': 42

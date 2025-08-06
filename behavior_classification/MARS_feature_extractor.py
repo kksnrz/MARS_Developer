@@ -1066,6 +1066,8 @@ def extract_features_top(sequence, cfg, progress_bar_sig=''):
                     frame1 = frame2
 
                 frame2 = reader.getFrame(video_frames[f])
+                if not isinstance(frame2, np.ndarray):
+                    frame2 = np.array(frame2)
                 frame2 = frame2.astype(np.float32)
 
                 if 'pixel_change' in features:

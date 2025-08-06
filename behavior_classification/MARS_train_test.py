@@ -78,11 +78,12 @@ def choose_classifier(clf_params):
     elif clf_params['clf_type'].lower() == 'xgb':
         params = unpack_params(clf_params, 'xgb_defaults')
         clf = XGBClassifier(**params)
-
+        print(clf.get_xgb_params())
     else:
         print('Unrecognized classifier type %s, defaulting to XGBoost!' % clf_params['clf_type'])
         params = unpack_params(clf_params, 'xgb_defaults')
         clf = XGBClassifier(**params)
+        print(clf.get_xgb_params())
     return clf
 
 
