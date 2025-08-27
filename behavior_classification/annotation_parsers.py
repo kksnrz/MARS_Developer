@@ -278,14 +278,21 @@ def parse_annot(filename, use_channels = [], timestamps = [], omit_channels = []
             channel_dict[channel_name] = behaviors_framewise
             bouts_dict[channel_name] = behaviors_boutwise
         
-        changed_behavior_list = merge_channels(bouts_dict, use_channels, omit_channels, end_frame)
+        # sloppy fix to get deterministic 'beh_frames' annotations
+        # as merge_channels is non-deterministic
+        for ch in channel_dict:
+            channel_dict[ch] = ['other' if beh == '' else beh for beh in channel_dict[ch]]
+        first_channel_key = next(iter(channel_dict))
+        behs_frame = channel_dict[first_channel_key]
+
+        #  changed_behavior_list = merge_channels(bouts_dict, use_channels, omit_channels, end_frame)
 
         ann_dict = {
             'keys': keys,
             'behs': behaviors,
             'nstrm': len(channel_names),
             'nFrames': end_frame,
-            'behs_frame': changed_behavior_list,
+            'behs_frame': behs_frame,
             'behs_bout': bouts_dict
         }
         return ann_dict

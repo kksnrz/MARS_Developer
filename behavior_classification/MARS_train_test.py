@@ -210,6 +210,134 @@ def load_data(project, dataset, train_behaviors, drop_behaviors=[], drop_empty_t
     return data_stack, annot_clean, data['vocabulary']
 
 
+# def load_data(project, dataset, train_behaviors, drop_behaviors=[], drop_empty_trials=False, drop_movies=[], do_quicksave=False):
+#     with open(os.path.join(project, 'project_config.yaml')) as f:
+#         cfg = yaml.load(f, Loader=yaml.FullLoader)
+#     with open(os.path.join(project, 'behavior', 'config_classifiers.yaml')) as f:
+#         clf_params = yaml.load(f, Loader=yaml.FullLoader)
+#     with open(os.path.join(project, 'behavior', 'behavior_equivalences.yaml')) as f:
+#         equivalences = yaml.load(f, Loader=yaml.FullLoader)
+#         if equivalences is None:
+#             equivalences = {}
+
+#     savestr = os.path.join(project, 'behavior', 'behavior_jsons', dataset + '_features')
+#     if clf_params['do_wnd']:
+#         savestr += '_wnd'
+#     elif clf_params['do_cwt']:
+#         savestr += '_cwt'
+
+#     feature_file = savestr + '_features.npy'
+#     annot_file = savestr + '_annot.json'
+#     vocab_file = os.path.join(project, 'behavior', 'behavior_jsons', dataset + '_features.json')
+        
+#     if not do_quicksave or not os.path.isfile(savestr):
+#         if dataset in ['train', 'test', 'val']:
+#             with open(os.path.join(project, 'behavior', 'behavior_jsons', dataset + '_features.json')) as f:
+#                 data = json.load(f)
+#         else:
+#             print('dataset must be train, test, or val.')
+#             return
+#         for label in train_behaviors:
+#             if label not in data['vocabulary']:
+#                 print('Error: target behavior ' + label + ' not found in this dataset.\nAvailable labels:')
+#                 print(list(data['vocabulary'].keys()))
+#                 return [], [], []
+
+#         keylist = list(data['sequences'][cfg['project_name']].keys())
+#         data_stack = []
+#         annot_raw = []
+#         if clf_params['verbose']:
+#             print('applying filters...')
+#         if clf_params['do_wnd'] or clf_params['do_cwt']:
+#             bar = progressbar.ProgressBar(widgets=
+#                                           [progressbar.FormatLabel('Filtering sequence %(value)d'), '/',
+#                                            progressbar.FormatLabel('%(max)d  '), progressbar.Percentage(), ' -- ', ' [',
+#                                            progressbar.Timer(), '] ',
+#                                            progressbar.Bar(), ' (', progressbar.ETA(), ') '], maxval=len(keylist))
+#             bar.start()
+#         bump=0
+#         for i, k in enumerate(keylist):
+#             if k in drop_movies:
+#                 continue
+#             feats = np.array(data['sequences'][cfg['project_name']][k]['features'])
+#             feats = np.swapaxes(feats, 0, 1)
+#             feats = mts.clean_data(feats)
+#             annots = data['sequences'][cfg['project_name']][k]['annotations']
+#             dropflag = False
+#             for label_name in train_behaviors:
+#                 if label_name in equivalences.keys():
+#                     hit_list = [data['vocabulary'][i] for i in equivalences[label_name] if i in data['vocabulary']]
+#                 else:
+#                     hit_list = [data['vocabulary'][label_name]]
+#                 if drop_empty_trials and not any([i in hit_list for i in annots]):
+#                     dropflag = True
+#             if dropflag:
+#                 continue
+#             if len(annots) != feats.shape[0]:
+#                 print('Length mismatch: %s %d %d' % (k, len(annots), feats.shape[0]))
+#                 print('Extra frames will be trimmed from the end of the sequence.')
+#                 if len(annots) > feats.shape[0]:
+#                     annots = annots[:feats.shape[0]]
+#                 else:
+#                     feats = feats[:len(annots), :, :]
+#             feats = np.concatenate((feats[:, 0, :], feats[:, 1, :]), axis=1)
+
+#             if clf_params['do_wnd']:
+#                 windows = [int(np.ceil(w * cfg['framerate'])*2+1) for w in clf_params['windows']]
+#                 feats = mts.apply_windowing(feats, windows)
+#             elif clf_params['do_cwt']:
+#                 scales = [int(np.ceil(w * cfg['framerate'])) for w in clf_params['wavelets']]
+#                 feats = mts.apply_wavelet_transform(feats, scales)
+
+#             if drop_behaviors:
+#                 if not isinstance(drop_behaviors, list):
+#                     drop_behaviors = [drop_behaviors]
+#                 drop_list = []
+#                 for d in drop_behaviors:
+#                     if d in equivalences.keys():
+#                         drop_list += [data['vocabulary'][i] for i in equivalences[d]]
+#                     else:
+#                         drop_list.append(data['vocabulary'][d])
+#                 keep_inds = [i for i, _annots in enumerate(annots) if _annots not in drop_list]
+#                 annots = annots[keep_inds]
+#                 feats = feats[keep_inds, :]
+#             annot_raw.append(annots)
+#             data_stack.append(feats)
+#             bump += len(annots)
+#             # print('%s   %d' % (k, bump))
+#             if clf_params['do_wnd'] or clf_params['do_cwt']:
+#                 bar.update(i)
+#         if clf_params['do_wnd'] or clf_params['do_cwt']:
+#             bar.finish()
+#         data_stack = np.concatenate(data_stack, axis=0)
+#         if do_quicksave:
+#             savedata = {'data_stack': data_stack.tolist(), 'annot_raw': annot_raw, 'vocabulary': data['vocabulary']}
+#             with open(savestr, 'w') as f:
+#                 json.dump(savedata, f)
+#     else:
+#         with open(savestr) as f:
+#             data = json.load(f)
+#         annot_raw = data['annot_raw']
+#         data_stack = data['data_stack']
+
+#     annot_clean = {}
+#     # print(data['vocabulary'])
+#     for label_name in train_behaviors:
+#         annot_clean[label_name] = []
+#         if label_name in equivalences.keys():
+#             hit_list = [data['vocabulary'][i] for i in equivalences[label_name] if i in data['vocabulary']]
+#         else:
+#             hit_list = [data['vocabulary'][label_name]]
+#         for a in annot_raw:
+#             a_clean = [1 if i in hit_list else 0 for i in a]
+#             if 1 in a_clean:
+#                 annot_clean[label_name] += a_clean
+#             else:
+#                 annot_clean[label_name] += [-1]*len(a_clean)
+#     print('done!\n')
+#     return data_stack, annot_clean, data['vocabulary']
+
+
 def assign_labels(all_predicted_probabilities, vocabulary):
     # Assigns labels based on the provided probabilities.
     labels_num = []
