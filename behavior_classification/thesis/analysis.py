@@ -44,6 +44,8 @@ def plot_precision_recall_curve(ground_truth: np.ndarray,
     ax.set_ylim(0.2, 1.0)
 
     if save_path:
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
         plt.savefig(f"{save_path}precision_recall_curve.png")
     return ax
 
@@ -62,6 +64,8 @@ def plot_mean_bout_duration(df, skip_behaviors=None, save_path=None):
     plt.tight_layout()
 
     if save_path:
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
         plt.savefig(f"{save_path}bout_duration_mean.png")
     plt.show()
 
@@ -81,6 +85,8 @@ def plot_median_bout_duration(df, skip_behaviors=None, save_path=None):
     plt.tight_layout()
 
     if save_path:
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
         plt.savefig(f"{save_path}bout_duration_median.png")
     plt.show()  
 
@@ -102,6 +108,8 @@ def plot_bout_duration_histogram(df, skip_behaviors=None, save_path=None):
     plt.title('Distribution of Bout Durations')
 
     if save_path:
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
         plt.savefig(f"{save_path}bout_duration_histogram.png")
     plt.show()
 
@@ -135,6 +143,8 @@ def plot_bout_duration_box(df, skip_behaviors=None, save_path=None):
     plt.tight_layout()
 
     if save_path:
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
         plt.savefig(f"{save_path}bout_duration_boxplot.png")
     plt.show()
 
@@ -162,7 +172,7 @@ def calculate_bout_properties(bout_data, total_frames, framerate: float = 30.0) 
     # bout_lengths = bout_data[:, 1] - bout_data[:, 0] + 1
     bout_durations = bout_lengths / framerate
 
-    num_bouts = len(bout_lengths)
+    num_bouts = bout_data['bout_count']
     mean_bout_length = np.mean(bout_lengths)
     median_bout_length = np.median(bout_lengths)
     std_bout_length = np.std(bout_lengths)
@@ -221,12 +231,13 @@ def print_bout_summary(bout_properties, total_frames, skip_behaviors=None, save_
 
     if save_path:
         try:
+            if not os.path.exists(save_path):
+                os.makedirs(save_path)
             with open(f"{save_path}bout_summary.txt", 'w', encoding='utf-8') as f:
                 f.write(output_string)
             print(f"Bout summary saved to {save_path}bout_summary.txt")
         except Exception as e:
             print(f"Error saving bout summary to file: {e}")
-
 
 
 def analyze_behavior_transitions(annotations):
@@ -268,6 +279,8 @@ def print_behavior_transitions(transitions, save_path=None):
 
     if save_path:
         try:
+            if not os.path.exists(save_path):
+                os.makedirs(save_path)
             with open(f"{save_path}behavior_transitions.txt", 'w', encoding='utf-8') as f:
                 f.write(output_string)
             print(f"Behavior transition saved to {save_path}behavior_transitions.txt")
@@ -280,7 +293,7 @@ def main():
     # ROOT_DIR = "./verify_paper_results/behavior/behavior_data/train"
     # ROOT_DIR = "./verify_paper_results/behavior/behavior_data/validation"
     # ROOT_DIR = "./verify_paper_results/behavior/behavior_data/test_1"
-    PLOT_SAVE_DIR = "./verify_paper_results/behavior/trained_classifiers/plots/full_"
+    PLOT_SAVE_DIR = "./verify_paper_results/behavior/trained_classifiers/dataset_analysis/full_dataset/plots/"
     # PLOT_SAVE_DIR = None
     SKIP_BEHAVIORS = ['other']
 
@@ -293,21 +306,11 @@ def main():
         if 'behs_frame' in ann_dict:
             all_behavior_names.update(ann_dict['behs_frame'])
 
-    # 3. Apply skip filter (always, even if empty)
+    # 3. Apply skip filter
     all_behavior_names = sorted(list(all_behavior_names.difference(SKIP_BEHAVIORS)))
     print("All behaviors considered for analysis:", all_behavior_names)
 
-    # 4. Initialize bout data containers
-    bout_data_by_behavior = {behavior: [] for behavior in all_behavior_names}
-
-
-    # ----------------------------------------------------------------------------------------------
-    # TODO: Code below is messy - REFACTOR
-    # TODO: 'Other' is not calc. correctly, as there are no annotations for it
-        # So it can be skipped or needs to be build manually
-    # TODO: Transition counts is not tested right now
-
-    # 5. Extract bouts from each annotation file
+    # 4. Extract bouts from each annotation file
     all_behavior_data = {}
     n_frames = 0
     for behavior in all_behavior_names:
@@ -325,16 +328,16 @@ def main():
         n_frames += ann_dict.get('nFrames', len(frame_annotations))
 
         for behavior in all_behavior_names:
-            # Collect and count total bouts by behavior
+            # Count total bouts / duration / total frames by behavior
             if behavior in ann_dict['behs_bout']['Ch1']:
                 bouts = ann_dict['behs_bout']['Ch1'][behavior]
 
                 differences = np.diff(bouts, axis=1)
-                transformed_bouts = np.concatenate((bouts, differences), axis=1)
+                bouts_start_end_duration = np.concatenate((bouts, differences), axis=1)
 
                 all_behavior_data[behavior]['collected_bouts'] = \
                     np.concatenate((all_behavior_data[behavior]['collected_bouts'],
-                                    transformed_bouts))
+                                    bouts_start_end_duration))
                 all_behavior_data[behavior]['bout_count'] += bouts.shape[0]
                 all_behavior_data[behavior]['total_frames'] += n_frames
 
@@ -344,23 +347,23 @@ def main():
             all_behavior_data[behavior], n_frames
         )
 
-    # 8. Print bout summary
+    # 5. Print bout summary
     print_bout_summary(
         bout_properties, n_frames,
         skip_behaviors=SKIP_BEHAVIORS,
         save_path=PLOT_SAVE_DIR
     )
 
-    # 9. Analyze transitions (now also skip behaviors explicitly)
+    # 6. Analyze behavior transitions
     transitions = analyze_behavior_transitions(annotations)
     print_behavior_transitions(transitions, save_path=PLOT_SAVE_DIR)
 
-    # 10. Optional plotting
+    # 7. Optional plotting
     df = pd.DataFrame.from_dict(bout_properties, orient='index')
-    # plot_mean_bout_duration(df, skip_behaviors=SKIP_BEHAVIORS, save_path=PLOT_SAVE_DIR)
-    # plot_median_bout_duration(df, skip_behaviors=SKIP_BEHAVIORS, save_path=PLOT_SAVE_DIR)
-    # plot_bout_duration_histogram(df, skip_behaviors=SKIP_BEHAVIORS, save_path=PLOT_SAVE_DIR)
-    # plot_bout_duration_box(df, skip_behaviors=SKIP_BEHAVIORS, save_path=PLOT_SAVE_DIR)
+    plot_mean_bout_duration(df, skip_behaviors=SKIP_BEHAVIORS, save_path=PLOT_SAVE_DIR)
+    plot_median_bout_duration(df, skip_behaviors=SKIP_BEHAVIORS, save_path=PLOT_SAVE_DIR)
+    plot_bout_duration_histogram(df, skip_behaviors=SKIP_BEHAVIORS, save_path=PLOT_SAVE_DIR)
+    plot_bout_duration_box(df, skip_behaviors=SKIP_BEHAVIORS, save_path=PLOT_SAVE_DIR)
 
 
 if __name__ == "__main__":
