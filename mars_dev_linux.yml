@@ -54,6 +54,7 @@ dependencies:
   - hdf5=1.10.6
   - icu=67.1
   - idna=2.10
+  - ijson=3.3.0
   - imageio=2.9.0
   - importlib-metadata=2.0.0
   - importlib_metadata=2.0.0
@@ -134,6 +135,7 @@ dependencies:
   - olefile=0.46
   - openssl=1.1.1k
   - opt_einsum=3.1.0
+  - orjson=3.6.0
   - packaging=20.7
   - pandas=1.2.0
   - pandoc=2.11

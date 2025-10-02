@@ -11,20 +11,28 @@ import scipy
 from scipy import signal
 import pywt
 from scipy.signal import medfilt
-
+from numba import njit
 
 flatten = lambda *n: (e for a in n for e in (flatten(*a) if isinstance(a, (tuple, list)) else (a,)))
 
-
+@njit(fastmath=True)
 def clean_data(data):
-    """Eliminate the NaN and Inf values by taking the last value that was neither."""
-    idx = np.where(np.isnan(data) | np.isinf(data))
-    if idx[0].size>0:
-        for j in range(len(idx[0])):
-            if idx[0][j] == 0:
-                data[idx[0][j], idx[1][j], idx[2][j]] = 0.
-            else:
-                data[idx[0][j], idx[1][j], idx[2][j]] = data[idx[0][j] - 1, idx[1][j], idx[2][j]]
+    """
+    Eliminate NaN and Inf values by replacing them
+    with the last valid value along axis 0.
+    If the first element is NaN/Inf, it is set to 0.
+    """
+    n0, n1, n2 = data.shape
+    
+    for i in range(n1):
+        for j in range(n2):
+            last_val = 0.0
+            for k in range(n0):
+                val = data[k, i, j]
+                if np.isnan(val) or np.isinf(val):
+                    data[k, i, j] = last_val
+                else:
+                    last_val = val
     return data
 
 
@@ -49,83 +57,113 @@ def apply_wavelet_transform(starter_features, scales=[1, 3, 5, 10, 30, 90, 270])
     return transformed_features
 
 
-def compute_win_feat(starter_feature, windows=[3, 11, 21]):
-    """This function computes the window features from a given starter feature."""
-    # Define the functions being computed.
-    fxns = [np.min, np.max, np.mean, np.std]
-    num_fxns = len(fxns)
-
-    # Get the number of frames
-    number_of_frames = np.shape(starter_feature)[0]
-
-    # Count the number of windows.
-    num_windows = len(windows)
-
-    # Number of additional features should simply be (the number of windows)*(the number of fxns) --in our case, 12.
-    num_feats = num_windows * num_fxns
-
-    # Create a placeholder for the features.d
-    features = np.zeros((number_of_frames, num_feats))
-
-    # Loop over the window sizes
-    for window_num, w in enumerate(windows):
-        # Iterate with a given window size.
-        # Get the space where we should put the newly computed features.
-        left_endpt = window_num * num_fxns
-        right_endpt = window_num * num_fxns + num_fxns
-
-        # Compute the features and store them.
-        features[:, left_endpt:right_endpt] = get_JAABA_feats(starter_feature=starter_feature, window_size=w)
-
-    return features
+@njit(fastmath=True)
+def create_toeplitz(col, row):
+    """Manually create a Toeplitz matrix (Numba-compatible)."""
+    n_rows = col.size
+    n_cols = row.size
+    mat = np.empty((n_rows, n_cols))
+    for i in range(n_rows):
+        for j in range(n_cols):
+            idx = j - i
+            if idx < 0:
+                mat[i, j] = col[-idx]
+            else:
+                mat[i, j] = row[idx]
+    return mat
 
 
+@njit(fastmath=True)
 def get_JAABA_feats(starter_feature, window_size=3):
-    # Get the number of frames.
-    number_of_frames = np.shape(starter_feature)[0]
-    # Get the radius of the window.
-    radius = (window_size - 1) / 2
-    radius = int(np.ceil(radius))
-    r = int(radius)
+    """
+    Compute window features using a Toeplitz matrix, Numba-compatible.
+    Returns same shape as original (frames x 4 functions).
+    """
+    number_of_frames = starter_feature.shape[0]
+    radius = int(np.ceil((window_size - 1) / 2))
+    
+    # Prepare column and row for Toeplitz
     row_placeholder = np.zeros(window_size)
-    column_placeholder = np.zeros(number_of_frames)
+    col_placeholder = np.zeros(number_of_frames)
+    
+    # Fill row
+    for i in range(radius):
+        row_placeholder[i] = starter_feature[radius - i]
+    for i in range(radius, window_size):
+        row_placeholder[i] = starter_feature[i - radius]
+    
+    # Fill column
+    for i in range(number_of_frames - radius):
+        col_placeholder[i] = starter_feature[i + radius]
+    for i in range(number_of_frames - radius, number_of_frames):
+        col_placeholder[i] = starter_feature[number_of_frames - (i - (number_of_frames - radius)) - 2]
 
-    row_placeholder[:r] = np.flip(starter_feature[1:(radius + 1)], 0)
-    row_placeholder[r:] = starter_feature[:(radius + 1)]
-
-    column_placeholder[:-radius] = starter_feature[radius:]
-    column_placeholder[-radius:] = np.flip(starter_feature[-(radius + 1):-1], 0)
-
-    # Create the matrix that we're going to compute on.
-    window_matrix = scipy.linalg.toeplitz(column_placeholder, row_placeholder)
-
-    # Set the functions.
-    fxns = [np.min, np.max, np.mean, np.std]
-    num_fxns = len(fxns)
-
-    # Make a placeholder for the window features we're computing.
-    window_feats = np.zeros((number_of_frames, num_fxns))
-
-    # Do the feature computation.
-    for fxn_num, fxn in enumerate(fxns):
-        if (window_size <= 3) & (fxn == np.mean):
-            window_feats[:, fxn_num] = starter_feature
+    # Create Toeplitz matrix
+    window_matrix = create_toeplitz(col_placeholder, row_placeholder)
+    
+    # Compute min, max, mean, std along axis 1
+    window_feats = np.zeros((number_of_frames, 4))
+    for i in range(number_of_frames):
+        # Min
+        window_feats[i, 0] = np.min(window_matrix[i, :])
+        # Max
+        window_feats[i, 1] = np.max(window_matrix[i, :])
+        # Mean (special case for window_size <=3)
+        if window_size <= 3:
+            window_feats[i, 2] = starter_feature[i]
         else:
-            window_feats[:, fxn_num] = fxn(window_matrix, axis=1)
+            window_feats[i, 2] = np.mean(window_matrix[i, :])
+        # Std
+        window_feats[i, 3] = np.std(window_matrix[i, :])
+    
     return window_feats
 
 
-def apply_windowing(starter_features, windows=[3,11,21]):
-    total_feat_num = np.shape(starter_features)[1]
+@njit(fastmath=True)
+def compute_win_feat(starter_feature, windows=(3, 11, 21)):
+    """
+    Compute window features for multiple window sizes.
+    Returns same shape as original (frames x num_windows*4).
+    """
+    number_of_frames = starter_feature.shape[0]
+    num_windows = len(windows)
+    num_fxns = 4
+    num_feats = num_windows * num_fxns
+    features = np.zeros((number_of_frames, num_feats))
+    
+    for window_num in range(num_windows):
+        w = windows[window_num]
+        left = window_num * num_fxns
+        right = left + num_fxns
+        window_feats = get_JAABA_feats(starter_feature, w)
+        for i in range(number_of_frames):
+            for j in range(num_fxns):
+                features[i, left + j] = window_feats[i, j]
+    
+    return features
 
-    window_features = np.array([])
+
+@njit(fastmath=True)
+def apply_windowing(starter_features, windows=(3, 11, 21)):
+    """
+    Apply windowing to each feature column in starter_features using compute_win_feat.
+    Returns a pre-allocated array with the same logic but faster.
+    """
+    num_frames, total_feat_num = starter_features.shape
+    num_windows = len(windows)
+    num_fxns = 4
+    out_num_cols = total_feat_num * num_windows * num_fxns
+    
+    # Pre-allocate output array
+    window_features = np.zeros((num_frames, out_num_cols))
+    
     for i in range(total_feat_num):
         feat_temp = compute_win_feat(starter_features[:, i], windows)
-        if i == 0:
-            window_features = feat_temp
-        else:
-            window_features = np.concatenate((window_features, feat_temp), axis=1)
-
+        # Compute column indices for placement
+        start_col = i * num_windows * num_fxns
+        end_col = start_col + num_windows * num_fxns
+        window_features[:, start_col:end_col] = feat_temp
+    
     return window_features
 
 

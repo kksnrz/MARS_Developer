@@ -48,6 +48,7 @@ dependencies:
   - icc_rt=2019.0.0
   - icu=67.1
   - idna=2.10
+  - ijson=3.3.0
   - imagecodecs=2020.5.30
   - imageio=2.9.0
   - importlib-metadata=2.0.0
@@ -101,6 +102,7 @@ dependencies:
   - openjpeg=2.3.1
   - openssl=1.1.1i
   - opt_einsum=3.1.0
+  - orjson=3.6.0
   - parso=0.8.0
   - pickleshare=0.7.5
   - pip=20.2.4
