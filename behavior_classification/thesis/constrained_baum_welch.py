@@ -381,8 +381,10 @@ def do_mstep_from_log(all_loggamma: List[np.ndarray],
     return init_prob_new, trans_mat_new, emission_mat_new
 
 
-def log_cbw_train(sequences: List[np.ndarray],
-                  labels_list: List[Optional[np.ndarray]],
+def log_cbw_train(sequences_tr: List[np.ndarray],
+                  labels_list_tr: List[Optional[np.ndarray]],
+                  sequences_ev: List[np.ndarray],
+                  labels_list_ev: List[Optional[np.ndarray]],
                   num_states: int,
                   num_symbols: int,
                   init_init_prob_mat: Optional[np.ndarray] = None,
@@ -402,8 +404,9 @@ def log_cbw_train(sequences: List[np.ndarray],
     Returns:
         dict with final params and histories
     """
-    obs_seq_len = len(sequences)
-    assert len(labels_list) == obs_seq_len # prevent length mismatch
+    print("CBW: Starting training...")
+    obs_seq_len = len(sequences_tr)
+    assert len(labels_list_tr) == obs_seq_len # prevent length mismatch
 
     rng = np.random.RandomState(rng_seed)
 
@@ -428,7 +431,7 @@ def log_cbw_train(sequences: List[np.ndarray],
     else:
         emission_mat = np.asarray(init_emission_mat, dtype=float).copy()
         emission_mat = emission_mat / emission_mat.sum(axis=1, keepdims=True)
-
+    print("CBW: Finished initialization.")
     # apply masks to initial mats
     if trans_mat_mask is not None:
         trans_mat_mask = np.asarray(trans_mat_mask, dtype=bool)
@@ -439,7 +442,7 @@ def log_cbw_train(sequences: List[np.ndarray],
         emission_mat_mask = np.asarray(emission_mat_mask, dtype=bool)
         emission_mat *= emission_mat_mask.astype(float) # apply masking
         emission_mat /= emission_mat.sum(axis=1, keepdims=True)
-
+    print("CBW: Applied masks to initial matrices.")
     # convert to log
     log_init_prob_mat = to_log(init_prob_mat)
     log_trans_mat = to_log(trans_mat)
@@ -449,16 +452,17 @@ def log_cbw_train(sequences: List[np.ndarray],
     loglik_history = []
     accuracy_history = [] if model_selection else None
     if model_selection:
+        print("CBW: Starting model selection...")
         _, _, accs  = do_model_selection([params_history[-1]],
-                                         sequences,
-                                         labels_list,
+                                         sequences_ev,
+                                         labels_list_ev,
                                          decoder=decoder)
         accuracy_history.append(accs[0])
 
     prev_total_loglik = -np.inf
     overall_start = time.time()
     it = 0
-
+    print("CBW: Entering main training loop...")
     while True:
         iter_start = time.time()
         all_loggamma = []
@@ -466,8 +470,8 @@ def log_cbw_train(sequences: List[np.ndarray],
         total_loglik = 0.0
 
         # E-step
-        for seq_idx, obs_seq in enumerate(sequences):
-            labels = labels_list[seq_idx]
+        for seq_idx, obs_seq in enumerate(sequences_tr):
+            labels = labels_list_tr[seq_idx]
             logalpha, seq_loglik = log_constrained_forward(obs_seq,
                                                            log_init_prob_mat,
                                                            log_trans_mat,
@@ -485,7 +489,7 @@ def log_cbw_train(sequences: List[np.ndarray],
         # M-step with optional masks
         pi_new, trans_mat_new, emission_mat_new = do_mstep_from_log(all_loggamma,
                                                                     all_logxi,
-                                                                    sequences,
+                                                                    sequences_tr,
                                                                     num_states,
                                                                     num_symbols,
                                                                     trans_mat_mask=trans_mat_mask,
@@ -501,8 +505,8 @@ def log_cbw_train(sequences: List[np.ndarray],
             params_history.append((pi_new.copy(), trans_mat_new.copy(), emission_mat_new.copy()))
             _, _, accs = do_model_selection(
                 [(pi_new, trans_mat_new, emission_mat_new)],
-                sequences,
-                labels_list, decoder=decoder)
+                sequences_ev,
+                labels_list_ev, decoder=decoder)
 
             accuracy_history.append(accs[0])
 
@@ -551,39 +555,10 @@ def log_cbw_train(sequences: List[np.ndarray],
             'accuracy_history': accuracy_history}
 
 
-def train_once(seed: int,
-               sequences: List[np.ndarray],
-               labels_list: List[Optional[np.ndarray]],
-               num_states: int,
-               num_symbols: int,
-               early_stop: float = 1e-6,
-               trans_mat_mask: Optional[np.ndarray] = None,
-               emission_mat_mask: Optional[np.ndarray] = None,
-               model_selection: bool = True,
-               decoder: str = 'post-viterbi',
-               verbose: bool = False)-> Tuple[int, Dict]:
-    """
-    Single training run with a given seed, supports model selection by labels.
-    Returns: seed, result_dict
-    """
-    result = log_cbw_train(
-        sequences=sequences,
-        labels_list=labels_list,
-        num_states=num_states,
-        num_symbols=num_symbols,
-        early_stop=early_stop,
-        trans_mat_mask=trans_mat_mask,
-        emission_mat_mask=emission_mat_mask,
-        model_selection=model_selection,
-        decoder=decoder,
-        rng_seed=seed,
-        verbose=verbose
-    )
-    return seed, result
-
-
-def multi_restart_log_cbw(sequences: List[np.ndarray],
-                          labels_list: List[Optional[np.ndarray]],
+def multi_restart_log_cbw(sequences_tr: List[np.ndarray],
+                          labels_list_tr: List[Optional[np.ndarray]],
+                          sequences_ev: List[np.ndarray],
+                          labels_list_ev: List[Optional[np.ndarray]],
                           num_states: int,
                           num_symbols: int,
                           early_stop: float = 1e-6,
@@ -604,9 +579,11 @@ def multi_restart_log_cbw(sequences: List[np.ndarray],
     """
     start_time = time.time()
     seeds = list(range(n_restarts))
-
-    results = Parallel(n_jobs=n_jobs)(delayed(log_cbw_train)(sequences=sequences,
-                                                             labels_list=labels_list,
+    print(f"Starting {n_restarts} restarts of constrained Baum-Welch with seeds: {seeds}")
+    results = Parallel(n_jobs=n_jobs)(delayed(log_cbw_train)(sequences_tr=sequences_tr,
+                                                             labels_list_tr=labels_list_tr,
+                                                             sequences_ev=sequences_ev,
+                                                             labels_list_ev=labels_list_ev,
                                                              num_states=num_states,
                                                              num_symbols=num_symbols,
                                                              early_stop=early_stop,
@@ -664,6 +641,7 @@ def posterior_viterbi(log_init_prob_mat: np.ndarray,
         path: decoded state sequence
         posterior: posterior probabilities 
     """
+    obs_seq = np.atleast_1d(obs_seq) # fix error when calling with joblib
     num_states = log_trans_mat.shape[0]
     obs_seq_len = len(obs_seq)
 
@@ -715,9 +693,9 @@ def posterior_viterbi(log_init_prob_mat: np.ndarray,
 
 
 def do_model_selection(params_history: List[Tuple[np.ndarray, np.ndarray, np.ndarray]],
-                                      sequences: List[np.ndarray],
-                                      labels_list: List[Optional[np.ndarray]],
-                                      decoder: str = 'post-viterbi'
+                       sequences: List[np.ndarray],
+                       labels_list: List[Optional[np.ndarray]],
+                       decoder: str = 'post-viterbi'
                                       ) -> Tuple[int, Tuple[np.ndarray, np.ndarray, np.ndarray], List[float]]:
     """
     Evaluate each saved model using decoding accuracy at known labeled positions.
@@ -786,8 +764,8 @@ def main():
       - Print log-likelihood history and model selection results.
       """
     rng = np.random.RandomState(0)
-    partial_label_pct = 0.05
-    num_states = 2 
+    partial_label_pct = 0.5
+    num_states = 2
     num_obs_symbols = 2
 
     # 1. Ground truth parameters
@@ -798,7 +776,7 @@ def main():
 
     emission_mat_true = np.array([[0.9, 0.1],
                                   [0.2, 0.8]])
-    
+
     print("\nGround-truth pi:\n", init_prob_mat_true)
     print("Ground-truth A:\n", trans_mat_true)
     print("Ground-truth B:\n", emission_mat_true)
@@ -809,7 +787,7 @@ def main():
         states, obs = _simulate_hmm(init_prob_mat_true,
                                     trans_mat_true,
                                     emission_mat_true,
-                                    obs_seq_len=1000000,
+                                    obs_seq_len=100000,
                                     rng=rng)
         sequences.append(obs)
         states_list.append(states)
@@ -858,12 +836,14 @@ def main():
 
     best_model, all_models = multi_restart_log_cbw(sequences,
                                                    labels_list,
+                                                   [],
+                                                   [],
                                                    num_states=2,
                                                    num_symbols=2,
                                                    early_stop=1e-8,
                                                    n_restarts=5,
                                                    n_jobs=-1,
-                                                   model_selection=False,
+                                                   model_selection=True,
                                                 #    decoder='viterbi',
                                                    verbose=True)
 
@@ -889,6 +869,19 @@ def main():
 
         print(f"\nSequence {i}:")
         print(f"Precision = {precision:.4f}, Recall = {recall:.4f}, F1 = {f1:.4f}")
+
+    for i, seq in enumerate(sequences):
+        preds = viterbi_decode(init_prob_mat_true, trans_mat_true, emission_mat_true, seq)
+        labels = labels_list[i]
+        # only evaluate positions with labels
+        mask = labels >= 0
+        y_true = labels[mask]
+        y_pred = preds[mask]
+        precision = precision_score(y_true, y_pred)
+        recall = recall_score(y_true, y_pred)
+        f1 = f1_score(y_true, y_pred)
+        print(f"\nSequence {i}:")
+        print(f"Ground truth Precision = {precision:.4f}, Recall = {recall:.4f}, F1 = {f1:.4f}")
 
 if __name__ == "__main__":
     main()
