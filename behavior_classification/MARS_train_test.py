@@ -763,26 +763,27 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
             X_ev_beh = np.array([X_ev_beh[i, :] for i in newinds_ev if i < len(y_ev_beh)])
             y_ev_beh = np.array([y_ev_beh[i] for i in newinds_ev if i < len(y_ev_beh)])
 
-
-        # TODO: write a wrapper into sampling_strategies.py 
-        # i.e. apply_sampling_strategy(X_tr_beh, y_tr_beh, X_ev_beh, y_ev_beh, sampling_pct, sampling_strategy, rng)
-        KEEP_FRAMES_PCT = 1
-        print(f'Keeping {100*KEEP_FRAMES_PCT}% of frames for training')
+        print(f"Keeping {clf_params['sampling_pct'] * 100}% of frames for training")
         X_tr_beh_labeled, \
             y_tr_beh_labeled, \
                 y_tr_beh_partial, \
-                    keep_indices_tr = ss.simple_random_sampling(X_tr_beh,
-                                                                y_tr_beh,
-                                                                KEEP_FRAMES_PCT,
-                                                                rng=42)
+                    keep_indices_tr = ss.apply_sampling_strat(X_tr_beh,
+                                                              y_tr_beh,
+                                                              sampling_strategy=clf_params['sampling_strategy'],
+                                                              sampling_pct=clf_params['sampling_pct'],
+                                                              rng=42,
+                                                              cluster_size_frames=clf_params['cluster_size_frames'])
+        
         if X_ev != []:
             X_ev_beh_labeled, \
                 y_ev_beh_labeled, \
                     y_ev_beh_partial, \
-                        keep_indices_ev = ss.simple_random_sampling(X_ev_beh,
-                                                                    y_ev_beh,
-                                                                    KEEP_FRAMES_PCT,
-                                                                    rng=42)
+                        keep_indices_ev = ss.apply_sampling_strat(X_ev_beh,
+                                                                  y_ev_beh,
+                                                                  sampling_strategy=clf_params['sampling_strategy'],
+                                                                  sampling_pct=clf_params['sampling_pct'],
+                                                                  rng=42,
+                                                                  cluster_size_frames=clf_params['cluster_size_frames'])
         else:
             X_ev_beh_labeled = []
             y_ev_beh_labeled = []
@@ -817,7 +818,7 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
         
         print('done training!')
     return results
-    return True
+
 
 def test_classifier(project, test_behaviors, drop_behaviors=[], drop_empty_trials=False,
                     do_quicksave=False):

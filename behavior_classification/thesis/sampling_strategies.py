@@ -120,6 +120,54 @@ def _sample_mean_rel_dist_centroid(X, Y, sampling_pct, rng=None):
     return _split_labeled(X, Y, keep_indices) + (keep_indices,)
 
 
+def apply_sampling_strat(X, Y, sampling_strategy='', sampling_pct=1, rng=42,
+                         cluster_size_frames=None):
+    """
+    Wrapper function for applying various sampling strategies.
+    
+    Extra parameters:
+        sampling_strategy: ['simple_random', 'stratified', 'systematic', 'cluster', 'purposive'].
+        cluster_size_frames: optional required for cluster sampling.
+    """
+    strat = sampling_strategy.lower().strip()
+    
+    if strat == 'simple_random':
+        X_labeled, Y_labeled, Y_partial, keep_indices = simple_random_sampling(X,
+                                                                               Y,
+                                                                               sampling_pct,
+                                                                               rng=rng)
+    elif strat == 'stratified':
+        X_labeled, Y_labeled, Y_partial, keep_indices = stratified_sampling(X,
+                                                                            Y,
+                                                                            sampling_pct,
+                                                                            rng=rng)
+    elif strat == 'systematic':
+        X_labeled, Y_labeled, Y_partial, keep_indices = systematic_sampling(X,
+                                                                            Y,
+                                                                            sampling_pct,
+                                                                            rng=rng)
+    elif strat == 'cluster':
+        if cluster_size_frames is None:
+            raise ValueError("Parameter 'cluster_size_frames' must be provided for cluster sampling.")
+        X_labeled, Y_labeled, Y_partial, keep_indices = cluster_sampling(X,
+                                                                         Y,
+                                                                         sampling_pct,
+                                                                         cluster_size_frames,
+                                                                         rng=rng)
+    elif strat == 'purposive':
+        X_labeled, Y_labeled, Y_partial, keep_indices = purposive_sampling(X,
+                                                                           Y,
+                                                                           sampling_pct,
+                                                                           rng=rng,
+                                                                           mode='rel_dist_centroid')
+    else:
+        raise ValueError(
+            f"Unknown sampling strategy '{sampling_strategy}'. "
+            "Expected one of: ['simple_random', 'stratified', 'systematic', 'cluster', 'purposive'].")
+    
+    return X_labeled, Y_labeled, Y_partial, keep_indices
+
+
 def main():
     num_frames = 10
     num_features = 635  # ensure index 634, for rel_dist_centroid sampling
