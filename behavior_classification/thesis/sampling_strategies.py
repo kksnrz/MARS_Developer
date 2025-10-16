@@ -23,7 +23,7 @@ def simple_random_sampling(X, Y, sampling_pct, rng=None):
     rng = _get_rng(rng)
     num_labels = len(Y)
     num_keep = int(round(num_labels * sampling_pct))
-    keep_indices = rng.choice(num_labels, size=num_keep, replace=False)
+    keep_indices = np.sort(rng.choice(num_labels, size=num_keep, replace=False))
     return _split_labeled(X, Y, keep_indices) + (keep_indices,)
 
 
@@ -41,6 +41,7 @@ def stratified_sampling(X, Y, sampling_pct, rng=None):
             chosen_indices = rng.choice(indices, size=min(num_keep, len(indices)), replace=False)
             keep_indices.append(chosen_indices)
     keep_indices = np.concatenate(keep_indices) if keep_indices else np.array([], dtype=int)
+    keep_indices = np.sort(keep_indices)
     return _split_labeled(X, Y, keep_indices) + (keep_indices,)
 
 
@@ -88,6 +89,7 @@ def cluster_sampling(X, Y, sampling_pct, cluster_size_frames, rng=None):
             break
 
     keep_indices = np.concatenate(chosen_indices)
+    keep_indices = np.sort(keep_indices)
     return _split_labeled(X, Y, keep_indices) + (keep_indices,)
 
 
