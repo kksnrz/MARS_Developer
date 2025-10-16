@@ -806,8 +806,8 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
             y_ev_beh_partial = []
             keep_indices_ev = []
 
-        bouts_tr = sum([(i != 0 and j == 0) for i, j in zip(y_tr_beh[:-1], y_tr_beh[1:])])
-        print('training using %d positive frames (%s bouts)' % (sum(y_tr_beh!=0), bouts_tr))
+        bouts_tr = sum([(i != 0 and j == 0) for i, j in zip(y_tr_beh_partial[keep_indices_tr][:-1], y_tr_beh_partial[keep_indices_tr][1:])])
+        print('training using %d positive frames (%s bouts)' % (sum(y_tr_beh_partial[keep_indices_tr]!=0), bouts_tr))
 
         beh_classifier = {'beh_name': beh_name,
                           'beh_id': vocab[beh_name],
