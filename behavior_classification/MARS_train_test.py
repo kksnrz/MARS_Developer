@@ -433,8 +433,7 @@ def do_train(beh_classifier, X_tr, y_tr_beh, X_ev, y_ev_beh, savedir, verbose=0)
 
 def do_train_smooth(beh_classifier,
                     X_tr_beh, y_tr_beh_partial, keep_indices_tr,
-                    X_ev_beh, y_ev_beh_partial, keep_indices_ev,
-                    savedir, verbose=False):
+                    X_ev_beh, y_ev_beh_partial, savedir, verbose=False):
     # Optional DEBUGGING: load the trained classifier
     # clf_path = os.path.join(savedir, 'classifier_' + 'investigation')
     # beh_classifier_loaded = dill.load(open(clf_path, 'rb'))
@@ -452,7 +451,7 @@ def do_train_smooth(beh_classifier,
     # get the labels for the current behavior
     t = time.time()
 
-    # predict hard labels on training set
+    # predict labels on training set
     if (verbose):
         print('XGB: predict labels on training set...')
     y_tr_pred_proba = np.zeros((len(y_tr_beh_partial), 2))
@@ -465,15 +464,15 @@ def do_train_smooth(beh_classifier,
     y_tr_pred_class = np.argmax(y_tr_pred_proba, axis=1)
 
 
-    # predict hard labels on eval set
+    # predict labels on eval set
     if (verbose):
         print('XGB: predict labels on eval set...')
     y_ev_pred_proba = np.zeros((len(y_ev_beh_partial), 2))
     gen = Batch(range(len(y_ev_beh_partial)), lambda x: x % 1e5 == 0, 1e5)
     for i in gen:
         inds = list(i)
-        X_tr_s = scaler.transform(X_tr_beh[inds])
-        pd_proba_tmp = (clf.predict_proba(X_tr_s))
+        X_ev_s = scaler.transform(X_ev_beh[inds])
+        pd_proba_tmp = (clf.predict_proba(X_ev_s))
         y_ev_pred_proba[inds] = pd_proba_tmp
     y_ev_pred_class = np.argmax(y_ev_pred_proba, axis=1)
 
@@ -580,7 +579,7 @@ def do_train_smooth(beh_classifier,
                                                            beh_name)
 
     # ----------------------------------------------------------------------------------------------
-    # original MARS HMM + FBS smoothing (fully supervised branch)
+    # original HMM MARS + FBS smoothing (fully supervised branch)
     # do hmm
     if (verbose):
         print('fitting HMM smoother...')
@@ -641,13 +640,14 @@ def do_train_smooth(beh_classifier,
     dill.dump(beh_classifier, open(os.path.join(savedir, 'classifier_' + beh_name), 'wb'))
 
 
-def do_test(name_classifier, X_te, y_te_beh, verbose=0, doPRC=0):
+def do_test(name_classifier, X_te_labeled, y_te_beh_labeled, verbose=0, doPRC=0):
     classifier = joblib.load(name_classifier)
     # unpack the classifier
     beh_name = classifier['beh_name']
     clf = classifier['bag_clf'] if 'bag_clf' in classifier.keys() else classifier['clf']
     # unpack the smoother
     hmm_fbs = classifier['hmm_fbs']
+    hmm_fbs_cbw = classifier['hmm_fbs_cbw']
     # unpack the smoothing parameters
     if 'params' in classifier.keys():
         scaler = classifier['scaler']
@@ -662,24 +662,24 @@ def do_test(name_classifier, X_te, y_te_beh, verbose=0, doPRC=0):
         shift = classifier['shift']
 
     # scale the data
-    X_te = scaler.transform(X_te)
+    X_te_labeled = scaler.transform(X_te_labeled)
     t = time.time()
-    len_y = len(y_te_beh)
-    gt = y_te_beh
+    len_y = len(y_te_beh_labeled)
+    gt = y_te_beh_labeled
 
     # predict probabilities:
-    y_pred_proba = clf.predict_proba(X_te)
-    proba = y_pred_proba
+    y_pred_proba = clf.predict_proba(X_te_labeled)
+    proba_xgb = y_pred_proba
 
     if doPRC:
         # compute predictions as a function of threshold to make P-R curves!
-        p_pos = np.squeeze(proba[:, 1])
+        p_pos = np.squeeze(proba_xgb[:, 1])
         proba_thr = np.zeros((p_pos.size, 100))
         for thr in range(100):
             proba_thr[:, thr] = np.array([1 if i > (thr/100.) else 0 for i in p_pos])
 
     y_pred_class = np.argmax(y_pred_proba, axis=1)
-    preds = y_pred_class
+    preds_xgb = y_pred_class
     # forward-backward smoothing:
     if doPRC:
         y_pred_fbs_hmm_range = np.zeros(proba_thr.shape)
@@ -689,15 +689,31 @@ def do_test(name_classifier, X_te, y_te_beh, verbose=0, doPRC=0):
             y_pred_fbs_hmm_range[:, thr] = np.argmax(y_proba_fbs_hmm, axis=1)
         sio.savemat(name_classifier + '_results.mat', {'preds': y_pred_fbs_hmm_range, 'gt': gt})
 
+        y_pred_fbs_hmm_range_cbw = np.zeros(proba_thr.shape)
+        for thr in range(100):
+            y_pred_fbs = mts.do_fbs(y_pred_class=np.squeeze(proba_thr[:, thr]), kn=kn, blur=4, blur_steps=blur_steps, shift=shift)
+            y_proba_fbs_hmm_cbw = hmm_fbs_cbw.predict_proba(y_pred_fbs.reshape((-1, 1)))
+            y_pred_fbs_hmm_range_cbw[:, thr] = np.argmax(y_proba_fbs_hmm_cbw, axis=1)
+        sio.savemat(name_classifier + '_results_cbw.mat', {'preds': y_pred_fbs_hmm_range_cbw, 'gt': gt})
+
+    # HMM MARS
     y_pred_fbs = mts.do_fbs(y_pred_class=y_pred_class, kn=kn, blur=4, blur_steps=blur_steps, shift=shift)
     y_proba_fbs_hmm = hmm_fbs.predict_proba(y_pred_fbs.reshape((-1, 1)))
     y_pred_fbs_hmm = np.argmax(y_proba_fbs_hmm, axis=1)
     preds_fbs_hmm = y_pred_fbs_hmm
     proba_fbs_hmm = y_proba_fbs_hmm
+
+    # HMM CBW
+    y_pred_fbs_cbw = mts.do_fbs(y_pred_class=y_pred_class, kn=kn, blur=4, blur_steps=blur_steps, shift=shift)
+    y_proba_fbs_hmm_cbw = hmm_fbs_cbw.predict_proba(y_pred_fbs_cbw.reshape((-1, 1)))
+    y_pred_fbs_hmm_cbw = np.argmax(y_proba_fbs_hmm_cbw, axis=1)
+    preds_fbs_hmm_cbw = y_pred_fbs_hmm_cbw
+    proba_fbs_hmm_cbw = y_proba_fbs_hmm_cbw
+
     dt = time.time() - t
     print('inference took %.2f sec' % dt)
 
-    return gt, proba, preds, preds_fbs_hmm, proba_fbs_hmm
+    return gt, proba_xgb, preds_xgb, preds_fbs_hmm, proba_fbs_hmm, preds_fbs_hmm_cbw, proba_fbs_hmm_cbw
 
 
 def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_trials=False,
@@ -812,10 +828,9 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
                         keep_indices_tr,
                         X_ev_beh,
                         y_ev_beh_partial,
-                        keep_indices_ev,
                         savedir,
                         verbose=clf_params['verbose'])
-        
+    
         print('done training!')
     return results
 
@@ -841,38 +856,81 @@ def test_classifier(project, test_behaviors, drop_behaviors=[], drop_empty_trial
 
     classifier_name = cfg['project_name'] + '_' + clf_params['clf_type'] + clf_suffix(clf_params)
     savedir = os.path.join(project, 'behavior', 'trained_classifiers', classifier_name)
-    T = len(list(y_te.values())[0])
+
+    # dirty implementation just to derive T below
+    _, _, _, keep_indices_te = ss.apply_sampling_strat(X_te,
+                                                       y_te[test_behaviors[0]],
+                                                       sampling_strategy=clf_params['sampling_strategy'],
+                                                       sampling_pct=clf_params['sampling_pct'],
+                                                       rng=42,
+                                                       cluster_size_frames=clf_params['cluster_size_frames'])
+    T = keep_indices_te.shape[0]
+    # T = len(list(y_te.values())[0])
     n_classes = max([vocab[b] for b in list(vocab.keys())])+1
     gt = np.zeros((T, n_classes)).astype(int)
-    proba = np.zeros((T, n_classes, 2))
-    preds = np.zeros((T, n_classes)).astype(int)
+    proba_xgb = np.zeros((T, n_classes, 2))
+    preds_xgb = np.zeros((T, n_classes)).astype(int)
+
     preds_fbs_hmm = np.zeros((T, n_classes)).astype(int)
     proba_fbs_hmm = np.zeros((T, n_classes, 2))
+
+    preds_fbs_hmm_cbw = np.zeros((T, n_classes)).astype(int)
+    proba_fbs_hmm_cbw = np.zeros((T, n_classes, 2))
+
     print('loading classifiers from %s' % savedir)
     for b, beh_name in enumerate(test_behaviors):
         print('predicting %s...' % beh_name)
+        X_te_beh_labeled, \
+        y_te_beh_labeled, \
+            y_te_beh_partial, \
+                keep_indices_te = ss.apply_sampling_strat(X_te,
+                                                          y_te[beh_name],
+                                                          sampling_strategy=clf_params['sampling_strategy'],
+                                                          sampling_pct=clf_params['sampling_pct'],
+                                                          rng=42,
+                                                          cluster_size_frames=clf_params['cluster_size_frames'])
+        print(f"applying sampling strategy: '{clf_params['sampling_strategy']}' sampling {clf_params['sampling_pct']*100}% of frames")
+        print(f"sampled test data size: {X_te_beh_labeled.shape[0]} X {X_te_beh_labeled.shape[1]}")
+
         name_classifier = os.path.join(savedir, 'classifier_' + beh_name)
 
-        gt[:, vocab[beh_name]], proba[:, vocab[beh_name], :], preds[:, vocab[beh_name]],\
-        preds_fbs_hmm[:, vocab[beh_name]], proba_fbs_hmm[:, vocab[beh_name], :] = \
-            do_test(name_classifier, X_te, y_te[beh_name],
-                    verbose=clf_params['verbose'], doPRC=True)
-    all_pred = assign_labels(proba, vocab)
+        gt[:, vocab[beh_name]], \
+        proba_xgb[:, vocab[beh_name], :], \
+        preds_xgb[:, vocab[beh_name]], \
+        preds_fbs_hmm[:, vocab[beh_name]], \
+        proba_fbs_hmm[:, vocab[beh_name], :], \
+        preds_fbs_hmm_cbw[:, vocab[beh_name]], \
+        proba_fbs_hmm_cbw[:, vocab[beh_name], :], = do_test(name_classifier,
+                                                            X_te_beh_labeled,
+                                                            y_te_beh_labeled,
+                                                            verbose=clf_params['verbose'],
+                                                            doPRC=True)
+    all_pred = assign_labels(proba_xgb, vocab)
+    
     all_pred_fbs_hmm = assign_labels(proba_fbs_hmm, vocab)
+    
+    all_pred_fbs_hmm_cbw = assign_labels(proba_fbs_hmm_cbw, vocab)
     gt = np.argmax(gt, axis=1)
 
     print(' ')
     print('Classifier performance:')
+    print("HMM MARS:")
     score_info(gt, all_pred_fbs_hmm, vocab)
+    print("HMM CBW:")
+    score_info(gt, all_pred_fbs_hmm_cbw, vocab)
 
     P = {'0_G': gt,
          '0_Gc': y_te,
-         '1_pd': preds,
+         '1_pd': preds_xgb,
          '2_pd_fbs_hmm': preds_fbs_hmm,
-         '3_proba_pd': proba,
+         '3_proba_pd': proba_xgb,
          '4_proba_pd_hmm_fbs': proba_fbs_hmm,
          '5_pred_ass': all_pred,
-         '6_pred_fbs_hmm_ass': all_pred_fbs_hmm
+         '6_pred_fbs_hmm_ass': all_pred_fbs_hmm,
+         '7_pd_fbs_hmm_cbw': preds_fbs_hmm_cbw,
+         '8_proba_pd_hmm_fbs_cbw,': proba_fbs_hmm_cbw,
+         '9_pred_fbs_hmm_ass_cbw': all_pred_fbs_hmm_cbw,
+
          }
     dill.dump(P, open(savedir + 'results.dill', 'wb'))
     sio.savemat(savedir + 'results.mat', P)
