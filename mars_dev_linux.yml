@@ -236,6 +236,7 @@ dependencies:
     - python-dateutil==2.8.2
     - ruamel-yaml==0.16.12
     - ruamel-yaml-clib==0.2.2
+    - seaborn==0.11.1
     - setuptools==57.4.0
     - six==1.16.0
 prefix: /home/mars/miniconda3/envs/mars_dev

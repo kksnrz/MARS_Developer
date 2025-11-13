@@ -205,18 +205,23 @@ def get_transmat(gt, n_states):
     return transitions
 
 
-def get_emissionmat(gt, pred, n_states):
+def get_emissionmat(gt, pred, n_states, n_bins):
     # The emissions are the translations from ground truth to predicted
     # Count emissions
-    cs = [Counter() for _ in range(n_states)]
-    for i, row in enumerate(gt):
-        cs[row][pred[i]] += 1
+    counts = [Counter() for _ in range(n_states)]
+    for s, o in zip(gt, pred):
+        counts[s][o] += 1
 
-    # Compute probabilities
-    emissions = np.zeros((n_states, n_states))
-    for x in range(n_states):
-        for y in range(n_states):
-            emissions[x, y] = float(cs[x][y]) / float(sum(cs[x].values()))
+    emissions = np.zeros((n_states, n_bins))
+    for s in range(n_states):
+        total = float(sum(counts[s].values()))
+        if total > 0:
+            for o in range(n_bins):
+                emissions[s, o] = counts[s][o] / total
+        else:
+            # fallback if no samples for that state
+            emissions[s, :] = 1.0 / n_bins
+
     return emissions
 
 

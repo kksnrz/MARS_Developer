@@ -1,13 +1,52 @@
-
-clf_type: 'xgb'
-feat_type: 'top'
-downsample_rate: 1  # temporal downsampling applied to training data
-smk_kn: [0.5, 0.25, 0.5]
+base_score: 0.5
 blur: 4
-shift: 4
-do_wnd: True  # JAABA-style windowing of features
-windows: [0.033333, 0.16667, 0.33333]  # windows for JAABA-style windowing (seconds)
-do_cwt: False  # Gabor wavelet transform of features
-scales: [0.033333, 0.01, 0.16667, 0.33333, 1, 2, 9]  # 1/frequency for wavelets (seconds)
+booster: gbtree
+clf_type: xgb
+cluster_size_frames: 300
+colsample_bylevel: 1
+colsample_bynode: 1
+colsample_bytree: 0.8
+do_cwt: false  # Gabor wavelet transform of features
+do_wnd: true  # JAABA-style windowing of features
+downsample_rate: 1  # temporal downsampling applied to training data
 early_stopping: 50  # rounds after which to stop training if loss fails to improve. set this to zero to turn off early stopping
-verbose: True
+feat_type: top
+gamma: 1
+learning_rate: 0.1
+max_bin: 256
+max_delta_step: 0
+max_depth: 3
+min_child_weight: 1
+missing: null
+n_estimators: 2000
+nthread: -1
+objective: binary:logistic
+random_state: 42
+reg_alpha: 0
+reg_lambda: 1
+sampling_pct: 0.03334
+sampling_strategy: simple_random
+scale_pos_weight: 1
+scales:  # 1/frequency for wavelets (seconds)
+- 0.033333
+- 0.01
+- 0.16667
+- 0.33333
+- 1
+- 2
+- 9
+seed: 33
+shift: 4
+smk_kn:
+- 0.5
+- 0.25
+- 0.5
+subsample: 0.8
+tree_method: hist
+verbose: true
+verbosity: 2
+windows:  # windows for JAABA-style windowing (seconds)
+- 0.033333
+- 0.16667
+- 0.33333
+n_bins: 10 # bins for hmm discretization (xgb probas -> linear bins)

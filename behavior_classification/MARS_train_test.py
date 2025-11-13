@@ -28,9 +28,11 @@ import orjson as oj
 import pickle
 import ijson
 
+from scipy.ndimage import gaussian_filter1d
+
 from .thesis import constrained_baum_welch as cbw
 from .thesis import sampling_strategies as ss
-
+from .thesis import analysis as ana
 # warnings.filterwarnings("ignore")
 # plt.ioff()
 
@@ -370,7 +372,7 @@ def do_train(beh_classifier, X_tr, y_tr_beh, X_ev, y_ev_beh, savedir, verbose=0)
     beh_name = beh_classifier['beh_name']
     clf = beh_classifier['clf']
     clf_params = beh_classifier['params']
-
+    print("XGB downsample rate: ", clf_params['downsample_rate'])
     # downsample the data & free up ram
     tmp = X_tr[::clf_params['downsample_rate'], :].copy()
     del X_tr
@@ -427,13 +429,13 @@ def do_train(beh_classifier, X_tr, y_tr_beh, X_ev, y_ev_beh, savedir, verbose=0)
                            'scaler': scaler})
     dill.dump(beh_classifier, open(os.path.join(savedir, 'classifier_' + beh_name), 'wb'))
     dt = (time.time() - t) / 60.
-    print('Runtime of do_train was %.2f mins' % dt)
+    print('Runtime of XGB training (do_train) was %.2f mins' % dt)
     return results, beh_classifier
 
 
 def do_train_smooth(beh_classifier,
                     X_tr_beh, y_tr_beh_partial, keep_indices_tr,
-                    X_ev_beh, y_ev_beh_partial, savedir, verbose=False):
+                    X_ev_beh, y_ev_beh_partial, keep_indices_ev, savedir, verbose=False):
     # Optional DEBUGGING: load the trained classifier
     # clf_path = os.path.join(savedir, 'classifier_' + 'investigation')
     # beh_classifier_loaded = dill.load(open(clf_path, 'rb'))
@@ -461,9 +463,7 @@ def do_train_smooth(beh_classifier,
         X_tr_s = scaler.transform(X_tr_beh[inds])
         pd_proba_tmp = (clf.predict_proba(X_tr_s))
         y_tr_pred_proba[inds] = pd_proba_tmp
-    y_tr_pred_class = np.argmax(y_tr_pred_proba, axis=1)
-
-
+    
     # predict labels on eval set
     if (verbose):
         print('XGB: predict labels on eval set...')
@@ -474,22 +474,86 @@ def do_train_smooth(beh_classifier,
         X_ev_s = scaler.transform(X_ev_beh[inds])
         pd_proba_tmp = (clf.predict_proba(X_ev_s))
         y_ev_pred_proba[inds] = pd_proba_tmp
-    y_ev_pred_class = np.argmax(y_ev_pred_proba, axis=1)
+
+    print("XGB Diags pre-smoothing")
+    y_pred = (y_tr_pred_proba[keep_indices_tr, 1] >= 0.5).astype(int)
+    n_total = len(y_tr_beh_partial[keep_indices_tr])
+    n_misclassified = np.sum(y_pred != y_tr_beh_partial[keep_indices_tr])
+    frac_misclassified = n_misclassified / n_total
+    print(f"Misclassified frames: {n_misclassified} / {n_total} ({frac_misclassified:.2%})")
+
+    fp = np.sum((y_pred == 1) & (y_tr_beh_partial[keep_indices_tr] == 0))
+    fn = np.sum((y_pred == 0) & (y_tr_beh_partial[keep_indices_tr] == 1))
+    print(f"False Positives: {fp} ({fp/n_total:.2%})")
+    print(f"False Negatives: {fn} ({fn/n_total:.2%})")
+    
+    # with gaussian smoothing 
+    proba_smooth_tr = y_tr_pred_proba[:, 1]
+    proba_smooth_ev = y_ev_pred_proba[:, 1]
+    # with gaussian smoothing
+    # proba_smooth_tr = gaussian_filter1d(y_tr_pred_proba[:, 1], sigma=1.5)
+    # proba_smooth_ev = gaussian_filter1d(y_ev_pred_proba[:, 1], sigma=1.5)
+
+    if clf_params['n_bins'] != 2:
+        # Create binned observations for hmms
+        bin_edges = np.linspace(0.0, 1.0, clf_params['n_bins'] + 1)
+        # bin train set
+        obs_bin_tr = np.digitize(proba_smooth_tr, bin_edges, right=False) - 1  # bins start from 0
+        obs_bin_tr = np.clip(obs_bin_tr, 0, clf_params['n_bins'] - 1).astype(np.int64)
+        obs_bin_ev = np.digitize(proba_smooth_ev, bin_edges, right=False) - 1  # bins start from 0
+        obs_bin_ev = np.clip(obs_bin_ev, 0, clf_params['n_bins'] - 1).astype(np.int64)
+    else:
+        obs_bin_tr = np.argmax(y_tr_pred_proba, axis=1)
+        obs_bin_ev = np.argmax(y_ev_pred_proba, axis=1)
+
+    train_bin_counts = np.bincount(obs_bin_tr, minlength=clf_params['n_bins'])
+    eval_bin_counts  = np.bincount(obs_bin_ev, minlength=clf_params['n_bins'])
+
+    print("XGB Bin sample counts")
+    for i in range(clf_params['n_bins']):
+        print(f"Bin {i}: train={train_bin_counts[i]}, eval={eval_bin_counts[i]}")
+
+    print("XGB Diags post-smoothing")
+    y_pred = (proba_smooth_tr[keep_indices_tr] >= 0.5).astype(int)
+    n_total = len(y_tr_beh_partial[keep_indices_tr])
+    n_misclassified = np.sum(y_pred != y_tr_beh_partial[keep_indices_tr])
+    frac_misclassified = n_misclassified / n_total
+    print(f"Misclassified frames: {n_misclassified} / {n_total} ({frac_misclassified:.2%})")
+
+    fp = np.sum((y_pred == 1) & (y_tr_beh_partial[keep_indices_tr] == 0))
+    fn = np.sum((y_pred == 0) & (y_tr_beh_partial[keep_indices_tr] == 1))
+    print(f"False Positives: {fp} ({fp/n_total:.2%})")
+    print(f"False Negatives: {fn} ({fn/n_total:.2%})")
+
+
+
+
+    ana.plot_xgb_proba_diags(proba=y_tr_pred_proba[keep_indices_tr, 1],
+                             labels=y_tr_beh_partial[keep_indices_tr],
+                             save_path=f"{savedir}xgb_proba_diagnostics_{beh_name}.png",
+                             bin_edges=bin_edges,
+                             threshold=0.5,
+                             log_scale=True)
+
+    ana.plot_calibration_curve(y_tr_pred_proba[keep_indices_tr, 1],
+                               y_tr_beh_partial[keep_indices_tr],
+                               'XGB',
+                               f"{savedir}xgb_calibration_{beh_name}.png",
+                               n_bins=clf_params['n_bins'])       
 
     # ----------------------------------------------------------------------------------------------
     # constrained Baum-Welch training + FBS smoothing (semi supervised branch)
-    print("Pre-HHM Train - FULLY labeled diff: xgb pred / gt: ", \
-          np.sum(y_tr_pred_class[keep_indices_tr] != y_tr_beh_partial[keep_indices_tr]) / len(y_tr_beh_partial[keep_indices_tr]))
-
-    best_model, all_models = cbw.multi_restart_log_cbw([y_tr_pred_class],
+    print(f"Labeled frames count (0, 1): {(y_tr_beh_partial != -1).sum()}, Unlabeled frames count (-1): {(y_tr_beh_partial == -1).sum()}")
+    best_model, all_models = cbw.multi_restart_log_cbw([obs_bin_tr],
                                                        [y_tr_beh_partial],
-                                                       [y_ev_pred_class],
+                                                       [obs_bin_ev], 
                                                        [y_ev_beh_partial],
                                                        num_states=2,
-                                                       num_symbols=2,
-                                                       early_stop=1e-8,
-                                                       n_restarts=5,
-                                                       n_jobs=-1,
+                                                       num_symbols=clf_params['n_bins'],
+                                                       early_stop=1e-6,
+                                                       max_rounds=50,
+                                                       n_restarts=10,
+                                                       n_jobs=clf_params['nthread'],
                                                        model_selection=True,
                                                        decoder='post-viterbi',
                                                        verbose=True)
@@ -505,84 +569,38 @@ def do_train_smooth(beh_classifier,
                                      random_state=42,
                                      params="",
                                      init_params="")
+    
     hmm_bin_cbw.startprob_ = cbw_init_prob_mat
     hmm_bin_cbw.transmat_ = cbw_trans_mat
     hmm_bin_cbw.emissionprob_ = cbw_emission_mat
 
-    y_proba_hmm_cbw = hmm_bin_cbw.predict_proba(y_tr_pred_class.reshape((-1, 1)))
+    y_proba_hmm_cbw = hmm_bin_cbw.predict_proba(obs_bin_tr.reshape((-1, 1)))
+
     y_pred_hmm_cbw = np.argmax(y_proba_hmm_cbw, axis=1)
+    hmm_bin_cbw = _stabilize_hmm(hmm_bin_cbw)
 
-    print("CBW - FULLY labeled diff after 1.cbw: cbw preds / gt: ", \
-          np.sum(y_pred_hmm_cbw[keep_indices_tr] != y_tr_beh_partial[keep_indices_tr]) / len(y_tr_beh_partial[keep_indices_tr]))
-    
-    # forward-backward smoothing with classes
-    if (verbose):
-        print('CBW: fitting forward-backward smoother...')
-    len_y = len(y_tr_beh_partial)
-    z = np.zeros((3, len_y))
-    y_fbs = np.r_[y_pred_hmm_cbw[range(shift, -1, -1)],
-                  y_pred_hmm_cbw, y_pred_hmm_cbw[range(len_y - 1, len_y - 1 - shift, -1)]]
-    for s in range(blur_steps):
-        y_fbs = signal.convolve(np.r_[y_fbs[0], y_fbs, y_fbs[-1]], kn / kn.sum(), 'valid')
-    z[0, :] = y_fbs[2 * shift + 1:]
-    z[1, :] = y_fbs[:-2 * shift - 1]
-    z[2, :] = y_fbs[shift + 1:-shift]
-    z_mean = np.mean(z, axis=0)
-    y_pred_fbs_cbw = binarize(z_mean.reshape((-1, 1)), .5).astype(int).reshape((1, -1))[0]
-    hmm_fbs_cbw = copy.deepcopy(hmm_bin_cbw)
-
-    print("CBW - FULLY labeled diff after 1.cbw + smoothing: smothed cbw preds / gt: ", \
-          np.sum(y_pred_fbs_cbw[keep_indices_tr] != y_tr_beh_partial[keep_indices_tr]) / len(y_tr_beh_partial[keep_indices_tr]))
-
-    # -----------------------------------
-    # experimental to get emission mat after smoothing
-    print("second cbw to infer emissionmat")
-    best_model, all_models = cbw.multi_restart_log_cbw([y_pred_fbs_cbw],
-                                                       [y_tr_beh_partial],
-                                                       [y_ev_pred_class],
-                                                       [y_ev_beh_partial],
-                                                       num_states=2,
-                                                       num_symbols=2,
-                                                       early_stop=1e-8,
-                                                       n_restarts=5,
-                                                       n_jobs=-1,
-                                                       model_selection=True,
-                                                       decoder='post-viterbi',
-                                                       verbose=True)
-    print("CBW: fbs Initial prob matrix:\n", best_model['best_params'][0])
-    print("CBW: fbsTransition matrix:\n", best_model['best_params'][1])
-    print("CBW: fbs Emission matrix:\n", best_model['best_params'][2])
-    cbw_init_prob_mat, cbw_trans_mat, cbw_emission_mat = best_model['best_params']
-
-    if (verbose):
-        print('CBW: fitting HMM smoother...')
-    hmm_fbs_cbw = hmm.MultinomialHMM(n_components=2,
-                                     algorithm="viterbi",
-                                     random_state=42,
-                                     params="",
-                                     init_params="")
-    hmm_fbs_cbw.startprob_ = cbw_init_prob_mat
-    hmm_fbs_cbw.transmat_ = cbw_trans_mat
-    hmm_fbs_cbw.emissionprob_ = cbw_emission_mat
-    # end experimental
-    # -------------------------
-
-    y_proba_fbs_hmm_cbw = hmm_fbs_cbw.predict_proba(y_pred_fbs_cbw.reshape((-1, 1)))
-    y_pred_fbs_hmm_cbw = np.argmax(y_proba_fbs_hmm_cbw, axis=1)
-
-    print("CBW FINAL - FULLY labeled diff after smoothing + 2.cbw: smoothing: smothed cbw preds / gt: ", \
-          np.sum(y_pred_fbs_hmm_cbw[keep_indices_tr] != y_tr_beh_partial[keep_indices_tr]) / len(y_tr_beh_partial[keep_indices_tr]))
+    try:
+        ana.plot_calibration_curve(
+            y_proba_hmm_cbw[keep_indices_tr, 1],
+            y_tr_beh_partial[keep_indices_tr],
+            'HMM CBW',
+            f"{savedir}hmm_cbw_calibration_{beh_name}.png",
+            n_bins=clf_params['n_bins'],
+            strategy='uniform'
+        )
+    except Exception as e:
+        print(f"Error: Skipped calibration curve for {beh_name} due to error: {e}")
 
     print(f"CBW metrics:")
     precision_cbw, recall_cbw, f_measure_cbw = prf_metrics(y_tr_beh_partial[keep_indices_tr],
-                                                           y_pred_fbs_hmm_cbw[keep_indices_tr],
+                                                           y_pred_hmm_cbw[keep_indices_tr],
                                                            beh_name)
 
     # ----------------------------------------------------------------------------------------------
     # original HMM MARS + FBS smoothing (fully supervised branch)
     # do hmm
     if (verbose):
-        print('fitting HMM smoother...')
+        print('MARS: fitting HMM smoother...')
     hmm_bin = hmm.MultinomialHMM(n_components=2,
                                  algorithm="viterbi",
                                  random_state=42,
@@ -590,40 +608,33 @@ def do_train_smooth(beh_classifier,
                                  init_params="")
     hmm_bin.startprob_ = np.array([np.sum(y_tr_beh_partial[keep_indices_tr] == i) / float(len(y_tr_beh_partial[keep_indices_tr])) for i in range(2)])
     hmm_bin.transmat_ = mts.get_transmat(y_tr_beh_partial[keep_indices_tr], 2)
-    hmm_bin.emissionprob_ = mts.get_emissionmat(y_tr_beh_partial[keep_indices_tr], y_tr_pred_class[keep_indices_tr], 2)
-    y_proba_hmm = hmm_bin.predict_proba(y_tr_pred_class[keep_indices_tr].reshape((-1, 1)))
-    y_pred_hmm = np.argmax(y_proba_hmm, axis=1)
+
+    # 10 bins case
+    hmm_bin.emissionprob_ = mts.get_emissionmat(y_tr_beh_partial[keep_indices_tr], obs_bin_tr[keep_indices_tr], 2, clf_params['n_bins'])
+    y_proba_hmm = hmm_bin.predict_proba(obs_bin_tr[keep_indices_tr].reshape((-1, 1)))
     
-    print("HMM - FULLY labeled diff pre smoothing: smoothed hmm preds / gt: ", \
-          np.sum(y_pred_hmm != y_tr_beh_partial[keep_indices_tr]) / len(y_tr_beh_partial[keep_indices_tr]))
+    y_pred_hmm = np.argmax(y_proba_hmm, axis=1)
+    hmm_bin = _stabilize_hmm(hmm_bin)
 
-    # forward-backward smoothing with classes
-    if (verbose):
-        print('fitting forward-backward smoother...')
-    len_y = len(y_tr_beh_partial[keep_indices_tr])
-    z = np.zeros((3, len_y))
-    y_fbs = np.r_[y_pred_hmm[range(shift, -1, -1)], y_pred_hmm, y_pred_hmm[range(len_y - 1, len_y - 1 - shift, -1)]]
-    for s in range(blur_steps):
-        y_fbs = signal.convolve(np.r_[y_fbs[0], y_fbs, y_fbs[-1]], kn / kn.sum(), 'valid')
-    z[0, :] = y_fbs[2 * shift + 1:]
-    z[1, :] = y_fbs[:-2 * shift - 1]
-    z[2, :] = y_fbs[shift + 1:-shift]
-    z_mean = np.mean(z, axis=0)
-    y_pred_fbs = binarize(z_mean.reshape((-1, 1)), .5).astype(int).reshape((1, -1))[0]
-    hmm_fbs = copy.deepcopy(hmm_bin)
-    hmm_fbs.emissionprob_ = mts.get_emissionmat(y_tr_beh_partial[keep_indices_tr], y_pred_fbs, 2)
-    y_proba_fbs_hmm = hmm_fbs.predict_proba(y_pred_fbs.reshape((-1, 1)))
-    y_pred_fbs_hmm = np.argmax(y_proba_fbs_hmm, axis=1)
-
-    print("HMM - FULLY labeled diff post smoothing: smoothed hmm preds / gt: ", \
-          np.sum(y_pred_fbs_hmm != y_tr_beh_partial[keep_indices_tr]) / len(y_tr_beh_partial[keep_indices_tr]))
+    try:
+        ana.plot_calibration_curve(
+            y_proba_hmm[:, 1],
+            y_tr_beh_partial[keep_indices_tr],
+            'HMM MARS',
+            f"{savedir}hmm_mars_calibration_{beh_name}.png",
+            n_bins=clf_params['n_bins'],
+            strategy='uniform'
+        )
+    except Exception as e:
+        print(f"Error: Skipped calibration curve for {beh_name} due to error: {e}")
 
     # print the results of training
     dt = (time.time() - t) / 60.
     print('training took %.2f mins' % dt)
     print('performance on training set:')
+    print("MARS metrics (unsmoothed):")
     precision, recall, f_measure = prf_metrics(y_tr_beh_partial[keep_indices_tr],
-                                               y_pred_fbs_hmm, beh_name)
+                                               y_pred_hmm, beh_name)
     
     beh_classifier.update({'clf': clf,
                            'scaler': scaler,
@@ -631,13 +642,26 @@ def do_train_smooth(beh_classifier,
                            'recall': recall,
                            'f_measure': f_measure,
                            'hmm_bin': hmm_bin,
-                           'hmm_fbs': hmm_fbs,
                            'precision_cbw': precision_cbw,
                            'recall_cbw': recall_cbw,
                            'f_measure_cbw': f_measure_cbw,
                            'hmm_bin_cbw': hmm_bin_cbw,
-                           'hmm_fbs_cbw': hmm_fbs_cbw})
+                           })
     dill.dump(beh_classifier, open(os.path.join(savedir, 'classifier_' + beh_name), 'wb'))
+
+
+def _stabilize_hmm(hmm):
+    eps = 1e-9
+    # start
+    sp = np.maximum(hmm.startprob_.astype(float), eps)
+    hmm.startprob_ = sp / sp.sum()
+    # transition
+    A = np.maximum(hmm.transmat_.astype(float), eps)
+    hmm.transmat_ = A / A.sum(axis=1, keepdims=True)
+    # emission
+    B = np.maximum(hmm.emissionprob_.astype(float), eps)
+    hmm.emissionprob_ = B / B.sum(axis=1, keepdims=True)
+    return hmm
 
 
 def do_test(name_classifier, X_te_labeled, y_te_beh_labeled, verbose=0, doPRC=0):
@@ -645,9 +669,10 @@ def do_test(name_classifier, X_te_labeled, y_te_beh_labeled, verbose=0, doPRC=0)
     # unpack the classifier
     beh_name = classifier['beh_name']
     clf = classifier['bag_clf'] if 'bag_clf' in classifier.keys() else classifier['clf']
-    # unpack the smoother
-    hmm_fbs = classifier['hmm_fbs']
-    hmm_fbs_cbw = classifier['hmm_fbs_cbw']
+
+    hmm_bin = classifier['hmm_bin']
+    hmm_bin_cbw = classifier['hmm_bin_cbw']
+
     # unpack the smoothing parameters
     if 'params' in classifier.keys():
         scaler = classifier['scaler']
@@ -671,44 +696,77 @@ def do_test(name_classifier, X_te_labeled, y_te_beh_labeled, verbose=0, doPRC=0)
     y_pred_proba = clf.predict_proba(X_te_labeled)
     proba_xgb = y_pred_proba
 
-    if doPRC:
-        # compute predictions as a function of threshold to make P-R curves!
-        p_pos = np.squeeze(proba_xgb[:, 1])
-        proba_thr = np.zeros((p_pos.size, 100))
-        for thr in range(100):
-            proba_thr[:, thr] = np.array([1 if i > (thr/100.) else 0 for i in p_pos])
-
     y_pred_class = np.argmax(y_pred_proba, axis=1)
     preds_xgb = y_pred_class
-    # forward-backward smoothing:
-    if doPRC:
-        y_pred_fbs_hmm_range = np.zeros(proba_thr.shape)
-        for thr in range(100):
-            y_pred_fbs = mts.do_fbs(y_pred_class=np.squeeze(proba_thr[:, thr]), kn=kn, blur=4, blur_steps=blur_steps, shift=shift)
-            y_proba_fbs_hmm = hmm_fbs.predict_proba(y_pred_fbs.reshape((-1, 1)))
-            y_pred_fbs_hmm_range[:, thr] = np.argmax(y_proba_fbs_hmm, axis=1)
-        sio.savemat(name_classifier + '_results.mat', {'preds': y_pred_fbs_hmm_range, 'gt': gt})
 
-        y_pred_fbs_hmm_range_cbw = np.zeros(proba_thr.shape)
-        for thr in range(100):
-            y_pred_fbs = mts.do_fbs(y_pred_class=np.squeeze(proba_thr[:, thr]), kn=kn, blur=4, blur_steps=blur_steps, shift=shift)
-            y_proba_fbs_hmm_cbw = hmm_fbs_cbw.predict_proba(y_pred_fbs.reshape((-1, 1)))
-            y_pred_fbs_hmm_range_cbw[:, thr] = np.argmax(y_proba_fbs_hmm_cbw, axis=1)
-        sio.savemat(name_classifier + '_results_cbw.mat', {'preds': y_pred_fbs_hmm_range_cbw, 'gt': gt})
+    # HMM CBW configuration
+    SMOOTH_GAUSSIAN = False
+
+    if clf_params['n_bins'] != 2:
+        # multi-bin hmm case
+        bin_edges = np.linspace(0.0, 1.0, clf_params['n_bins'] + 1)
+        if SMOOTH_GAUSSIAN:
+            proba_smooth = gaussian_filter1d(y_pred_proba[:, 1], sigma=1.5) # do_fbs() is equivalent to 3-4 sigma
+            obs_seq = np.digitize(proba_smooth, bin_edges, right=False) - 1
+        else:
+            obs_seq = np.digitize(y_pred_proba[:, 1], bin_edges, right=False) - 1
+        obs_seq = np.clip(obs_seq, 0, clf_params['n_bins'] - 1).astype(np.int64)
+    else:
+        # 2x2 hmm case
+        if SMOOTH_GAUSSIAN:
+            proba_smooth = gaussian_filter1d(y_pred_proba[:, 1], sigma=1.5)
+            obs_seq = (proba_smooth > 0.5).astype(np.int64)
+        else:
+            obs_seq = y_pred_class
 
     # HMM MARS
-    y_pred_fbs = mts.do_fbs(y_pred_class=y_pred_class, kn=kn, blur=4, blur_steps=blur_steps, shift=shift)
-    y_proba_fbs_hmm = hmm_fbs.predict_proba(y_pred_fbs.reshape((-1, 1)))
+    # y_pred_fbs = mts.do_fbs(y_pred_class=y_pred_class, kn=kn, blur=4, blur_steps=blur_steps, shift=shift)
+    # y_proba_fbs_hmm = hmm_bin.predict_proba(y_pred_fbs.reshape((-1, 1)))
+
+    y_proba_fbs_hmm = hmm_bin.predict_proba(obs_seq.reshape((-1, 1)))
     y_pred_fbs_hmm = np.argmax(y_proba_fbs_hmm, axis=1)
     preds_fbs_hmm = y_pred_fbs_hmm
     proba_fbs_hmm = y_proba_fbs_hmm
 
     # HMM CBW
-    y_pred_fbs_cbw = mts.do_fbs(y_pred_class=y_pred_class, kn=kn, blur=4, blur_steps=blur_steps, shift=shift)
-    y_proba_fbs_hmm_cbw = hmm_fbs_cbw.predict_proba(y_pred_fbs_cbw.reshape((-1, 1)))
+    y_proba_fbs_hmm_cbw = hmm_bin_cbw.predict_proba(obs_seq.reshape((-1, 1)))
     y_pred_fbs_hmm_cbw = np.argmax(y_proba_fbs_hmm_cbw, axis=1)
     preds_fbs_hmm_cbw = y_pred_fbs_hmm_cbw
     proba_fbs_hmm_cbw = y_proba_fbs_hmm_cbw
+
+    if doPRC:
+        # 2x2 hmm with fbs
+        # y_pred_fbs = mts.do_fbs(y_pred_class=obs_seq, kn=kn, blur=4, blur_steps=blur_steps, shift=shift)
+        # proba_sv = hmm_bin.predict_proba(y_pred_fbs.reshape(-1, 1))[:, 1]
+
+        proba_sv = hmm_bin.predict_proba(obs_seq.reshape(-1, 1))[:, 1]
+        proba_cbw = hmm_bin_cbw.predict_proba(obs_seq.reshape(-1, 1))[:, 1]
+
+        sio.savemat(name_classifier + '_results.mat',
+                    {'proba': proba_sv,
+                     'gt': gt})
+        sio.savemat(name_classifier + '_results_cbw.mat',
+                    {'proba': proba_cbw,
+                     'gt': gt})
+
+    A_hmm_mars = hmm_bin.transmat_
+    B_hmm_mars = hmm_bin.emissionprob_
+    A_hmm_cbw = hmm_bin_cbw.transmat_
+    B_hmm_cbw = hmm_bin_cbw.emissionprob_
+
+    print("Transition Matrix (A) - HMM MARS:\n", A_hmm_mars)
+    print("Transition Matrix (A) - HMM CBW:\n", A_hmm_cbw)
+    print("Emission Matrix (B) - HMM MARS:\n", B_hmm_mars)
+    print("Emission Matrix (B) - HMM CBW:\n", B_hmm_cbw)
+
+    diff = np.sum(preds_fbs_hmm != preds_fbs_hmm_cbw)
+    print("Number of differing frames:", diff)
+
+    # mae: 0=identical proba output, 1=maximally different proba
+    mae = np.mean(np.abs(proba_fbs_hmm[:,1] - proba_fbs_hmm_cbw[:,1]))
+    # corr: 1=aligned proba output, 0=unaliged probas (unrelated patterns)
+    corr = np.corrcoef(proba_fbs_hmm[:,1], proba_fbs_hmm_cbw[:,1])[0,1]
+    print("Mean absolute error (MAE) probs:", mae, "Correlation:", corr)
 
     dt = time.time() - t
     print('inference took %.2f sec' % dt)
@@ -763,21 +821,21 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
             X_ev_beh = []
             y_ev_beh = []
 
-        # shuffle in blocks of 2000 frames:
-        blocksize = 2000
-        num_blocks_tr = int(np.ceil(len(y_tr_beh) / blocksize))
-        blockorder_tr = list(range(num_blocks_tr))
-        random.shuffle(blockorder_tr)
-        newinds_tr = list([j + blocksize * i for i in blockorder_tr for j in np.arange(blocksize)])
-        X_tr_beh = np.array([X_tr_beh[i, :] for i in newinds_tr if i < len(y_tr_beh)])
-        y_tr_beh = np.array([y_tr_beh[i] for i in newinds_tr if i < len(y_tr_beh)])
-        if X_ev != []:
-            num_blocks_ev = int(np.ceil(len(y_ev_beh) / blocksize))
-            blockorder_ev = list(range(num_blocks_ev))
-            random.shuffle(blockorder_ev)
-            newinds_ev = list([j + blocksize * i for i in blockorder_ev for j in np.arange(blocksize)])
-            X_ev_beh = np.array([X_ev_beh[i, :] for i in newinds_ev if i < len(y_ev_beh)])
-            y_ev_beh = np.array([y_ev_beh[i] for i in newinds_ev if i < len(y_ev_beh)])
+        # # shuffle in blocks of 2000 frames:
+        # blocksize = 2000
+        # num_blocks_tr = int(np.ceil(len(y_tr_beh) / blocksize))
+        # blockorder_tr = list(range(num_blocks_tr))
+        # random.shuffle(blockorder_tr)
+        # newinds_tr = list([j + blocksize * i for i in blockorder_tr for j in np.arange(blocksize)])
+        # X_tr_beh = np.array([X_tr_beh[i, :] for i in newinds_tr if i < len(y_tr_beh)])
+        # y_tr_beh = np.array([y_tr_beh[i] for i in newinds_tr if i < len(y_tr_beh)])
+        # if X_ev != []:
+        #     num_blocks_ev = int(np.ceil(len(y_ev_beh) / blocksize))
+        #     blockorder_ev = list(range(num_blocks_ev))
+        #     random.shuffle(blockorder_ev)
+        #     newinds_ev = list([j + blocksize * i for i in blockorder_ev for j in np.arange(blocksize)])
+        #     X_ev_beh = np.array([X_ev_beh[i, :] for i in newinds_ev if i < len(y_ev_beh)])
+        #     y_ev_beh = np.array([y_ev_beh[i] for i in newinds_ev if i < len(y_ev_beh)])
 
         print(f"Keeping {clf_params['sampling_pct'] * 100}% of frames for training")
         X_tr_beh_labeled, \
@@ -807,7 +865,7 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
             keep_indices_ev = []
 
         bouts_tr = sum([(i != 0 and j == 0) for i, j in zip(y_tr_beh_partial[keep_indices_tr][:-1], y_tr_beh_partial[keep_indices_tr][1:])])
-        print('training using %d positive frames (%s bouts)' % (sum(y_tr_beh_partial[keep_indices_tr]!=0), bouts_tr))
+        print('training using %d positive (presence) frames (%s bouts)' % (sum(y_tr_beh_partial[keep_indices_tr]!=0), bouts_tr))
 
         beh_classifier = {'beh_name': beh_name,
                           'beh_id': vocab[beh_name],
@@ -818,7 +876,6 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
                            X_tr_beh_labeled, y_tr_beh_labeled,
                            X_ev_beh_labeled, y_ev_beh_labeled,
                            savedir, verbose=clf_params['verbose'])
-
         del X_ev_beh_labeled, y_ev_beh_labeled
         gc.collect()
 
@@ -828,6 +885,7 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
                         keep_indices_tr,
                         X_ev_beh,
                         y_ev_beh_partial,
+                        keep_indices_ev,
                         savedir,
                         verbose=clf_params['verbose'])
     
@@ -857,15 +915,21 @@ def test_classifier(project, test_behaviors, drop_behaviors=[], drop_empty_trial
     classifier_name = cfg['project_name'] + '_' + clf_params['clf_type'] + clf_suffix(clf_params)
     savedir = os.path.join(project, 'behavior', 'trained_classifiers', classifier_name)
 
-    # dirty implementation just to derive T below
-    _, _, _, keep_indices_te = ss.apply_sampling_strat(X_te,
-                                                       y_te[test_behaviors[0]],
-                                                       sampling_strategy=clf_params['sampling_strategy'],
-                                                       sampling_pct=clf_params['sampling_pct'],
-                                                       rng=42,
-                                                       cluster_size_frames=clf_params['cluster_size_frames'])
-    T = keep_indices_te.shape[0]
-    # T = len(list(y_te.values())[0])
+    # ref_beh = test_behaviors[0]   # reference behavior
+
+    # _, _, _, keep_indices_te = ss.apply_sampling_strat(
+    #     X_te,
+    #     y_te[ref_beh],
+    #     sampling_strategy=clf_params['sampling_strategy'],
+    #     sampling_pct=clf_params['sampling_pct'],
+    #     rng=42,
+    #     cluster_size_frames=clf_params.get('cluster_size_frames', None)
+    # )
+
+    # keep_indices_te = np.sort(keep_indices_te)
+    # T = len(keep_indices_te)
+
+    T = len(list(y_te.values())[0])
     n_classes = max([vocab[b] for b in list(vocab.keys())])+1
     gt = np.zeros((T, n_classes)).astype(int)
     proba_xgb = np.zeros((T, n_classes, 2))
@@ -880,18 +944,11 @@ def test_classifier(project, test_behaviors, drop_behaviors=[], drop_empty_trial
     print('loading classifiers from %s' % savedir)
     for b, beh_name in enumerate(test_behaviors):
         print('predicting %s...' % beh_name)
-        X_te_beh_labeled, \
-        y_te_beh_labeled, \
-            y_te_beh_partial, \
-                keep_indices_te = ss.apply_sampling_strat(X_te,
-                                                          y_te[beh_name],
-                                                          sampling_strategy=clf_params['sampling_strategy'],
-                                                          sampling_pct=clf_params['sampling_pct'],
-                                                          rng=42,
-                                                          cluster_size_frames=clf_params['cluster_size_frames'])
-        print(f"applying sampling strategy: '{clf_params['sampling_strategy']}' sampling {clf_params['sampling_pct']*100}% of frames")
-        print(f"sampled test data size: {X_te_beh_labeled.shape[0]} X {X_te_beh_labeled.shape[1]}")
+        # X_te_beh_labeled = X_te[keep_indices_te]
+        # y_te_beh_labeled = y_te[beh_name][keep_indices_te]
 
+        # print(f"applying sampling strategy: '{clf_params['sampling_strategy']}' sampling {clf_params['sampling_pct']*100}% of frames")
+        # print(f"sampled test data size: {X_te_beh_labeled.shape[0]} X {X_te_beh_labeled.shape[1]}")
         name_classifier = os.path.join(savedir, 'classifier_' + beh_name)
 
         gt[:, vocab[beh_name]], \
@@ -901,8 +958,8 @@ def test_classifier(project, test_behaviors, drop_behaviors=[], drop_empty_trial
         proba_fbs_hmm[:, vocab[beh_name], :], \
         preds_fbs_hmm_cbw[:, vocab[beh_name]], \
         proba_fbs_hmm_cbw[:, vocab[beh_name], :], = do_test(name_classifier,
-                                                            X_te_beh_labeled,
-                                                            y_te_beh_labeled,
+                                                            X_te, # X_te_beh_labeled,
+                                                            y_te[beh_name], # y_te_beh_labeled,
                                                             verbose=clf_params['verbose'],
                                                             doPRC=True)
     all_pred = assign_labels(proba_xgb, vocab)
@@ -912,25 +969,23 @@ def test_classifier(project, test_behaviors, drop_behaviors=[], drop_empty_trial
     all_pred_fbs_hmm_cbw = assign_labels(proba_fbs_hmm_cbw, vocab)
     gt = np.argmax(gt, axis=1)
 
-    print(' ')
     print('Classifier performance:')
     print("HMM MARS:")
     score_info(gt, all_pred_fbs_hmm, vocab)
     print("HMM CBW:")
     score_info(gt, all_pred_fbs_hmm_cbw, vocab)
 
-    P = {'0_G': gt,
-         '0_Gc': y_te,
+    P = {'0_G': gt, # ground truth with values from vocab i.e. [0,1,2,3,...]
+         '0_Gc': y_te, # ground truth categorical labels i.e. [0, 1]
          '1_pd': preds_xgb,
          '2_pd_fbs_hmm': preds_fbs_hmm,
          '3_proba_pd': proba_xgb,
          '4_proba_pd_hmm_fbs': proba_fbs_hmm,
-         '5_pred_ass': all_pred,
-         '6_pred_fbs_hmm_ass': all_pred_fbs_hmm,
-         '7_pd_fbs_hmm_cbw': preds_fbs_hmm_cbw,
+         '5_pred_ass': all_pred, # xgb preds assigned labels (multiclass)
+         '6_pred_fbs_hmm_ass': all_pred_fbs_hmm, # hmm mars preds assigned labels (multiclass)
+         '7_pd_fbs_hmm_cbw': preds_fbs_hmm_cbw, 
          '8_proba_pd_hmm_fbs_cbw,': proba_fbs_hmm_cbw,
-         '9_pred_fbs_hmm_ass_cbw': all_pred_fbs_hmm_cbw,
-
+         '9_pred_fbs_hmm_ass_cbw': all_pred_fbs_hmm_cbw, # hmm cbw preds assigned labels (multiclass)
          }
     dill.dump(P, open(savedir + 'results.dill', 'wb'))
     sio.savemat(savedir + 'results.mat', P)
