@@ -393,6 +393,7 @@ def log_cbw_train(sequences_tr: List[np.ndarray],
                   trans_mat_mask: Optional[np.ndarray] = None,
                   emission_mat_mask: Optional[np.ndarray] = None,
                   early_stop: float = 1e-6,
+                  max_rounds: int = 300,
                   model_selection: bool = True,
                   decoder: str = 'post-viterbi',
                   rng_seed: int = 1234,
@@ -463,7 +464,7 @@ def log_cbw_train(sequences_tr: List[np.ndarray],
     overall_start = time.time()
     it = 0
     print("CBW: Entering main training loop...")
-    while True:
+    while it < max_rounds:
         iter_start = time.time()
         all_loggamma = []
         all_logxi = []
@@ -562,6 +563,7 @@ def multi_restart_log_cbw(sequences_tr: List[np.ndarray],
                           num_states: int,
                           num_symbols: int,
                           early_stop: float = 1e-6,
+                          max_rounds: int = 300,
                           n_restarts: int = 5,
                           n_jobs: int = -1,
                           trans_mat_mask: Optional[np.ndarray] = None,
@@ -587,6 +589,7 @@ def multi_restart_log_cbw(sequences_tr: List[np.ndarray],
                                                              num_states=num_states,
                                                              num_symbols=num_symbols,
                                                              early_stop=early_stop,
+                                                             max_rounds=max_rounds,
                                                              trans_mat_mask=trans_mat_mask,
                                                              emission_mat_mask=emission_mat_mask,
                                                              model_selection=model_selection,

@@ -14,7 +14,7 @@ from glob import glob
 
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (precision_recall_curve, precision_score, recall_score, f1_score,
-                             roc_auc_score, average_precision_score, brier_score_loss, 
+                             roc_auc_score, average_precision_score, brier_score_loss,
                              PrecisionRecallDisplay)
 
 DIR_PREFIX = 'verify_paper_results_xgb_es50_depth3_child1_wnd'
@@ -93,7 +93,7 @@ def plot_calibration_curve(proba, labels, plot_label, save_path=None, n_bins=10,
     prob_true, prob_pred = calibration_curve(labels, proba, n_bins=n_bins, strategy=strategy)
 
     plt.figure(figsize=(6, 6))
-    plt.plot(prob_pred, prob_true, marker='o', markersize=4, linestyle='-', color="black", 
+    plt.plot(prob_pred, prob_true, marker='o', markersize=4, linestyle='-', color="black",
              linewidth=1, label=plot_label)
     plt.plot([0, 1], [0, 1], linestyle='--', color='gray', linewidth=1, label='Perfect calibration')
     plt.xlabel("Predicted probability", fontsize=12)
@@ -275,7 +275,7 @@ def load_run_prc_data(folder, behavior):
         return None, None
     mars_data = sio.loadmat(path_mars)
     cbw_data = sio.loadmat(path_cbw)
-    return (mars_data["gt"].ravel(), mars_data["proba"].ravel()), (cbw_data["gt"].ravel(), 
+    return (mars_data["gt"].ravel(), mars_data["proba"].ravel()), (cbw_data["gt"].ravel(),
                                                                    cbw_data["proba"].ravel())
 
 
@@ -588,7 +588,7 @@ def plot_median_bout_duration(df, skip_behaviors=None, save_path=None):
         if not os.path.exists(save_path):
             os.makedirs(save_path)
         plt.savefig(f"{save_path}bout_duration_median.png")
-    plt.show()  
+    plt.show()
 
 
 def plot_bout_duration_histogram(df, skip_behaviors=None, save_path=None):
@@ -773,7 +773,7 @@ def print_behavior_transitions(transitions, save_path=None):
     total_transition_count = np.sum(transition_counts)
     for (beh1, beh2), count in sorted(transitions.items(), key=lambda x: x[1], reverse=True):
         output_string += f"Transition: {beh1} -> {beh2}, Count: {count}\n"
-    
+
     output_string += f"Total Transitions: {total_transition_count}\n"
     print(output_string)
 
@@ -872,17 +872,18 @@ if __name__ == "__main__":
     BEHAVIORS = ["attack", "investigation", "mount"]
     DIR_PREFIX = 'verify_paper_results_xgb_es50_depth3_child1_wnd'
 
-    BASE_PATH = './verify_paper_results/behavior/trained_classifiers/'
+    BASE_PATH = './verify_paper_results/behavior/trained_classifiers/'#analysis/2x10_hmms/unsmoothed_dirichilet_soft_a'
 
     STRATS = ["natural", "simple_random", "stratified", "systematic", "cluster", "purposive"]
     PCTS = ['0.01667','0.03334', '0.06668', '0.13336']
+    # STRATS = ["natural"]
 
     plot_pr_curves(
         base_path=BASE_PATH,
         strats=STRATS,
         pcts=PCTS,
         behaviors=BEHAVIORS,
-        # exact_folder="./verify_paper_results/behavior/trained_classifiers/verify_paper_results_xgb_es50_depth3_child1_wnd_cluster_0.01667pct_20251113_023629",
+        exact_folder="./verify_paper_results/behavior/trained_classifiers/verify_paper_results_xgb_es50_depth3_child1_wnd_cluster_0.01667pct_20251114_033412",
         show_thresh=True,
         show_f1=False,
         save_figs=True,
@@ -899,9 +900,8 @@ if __name__ == "__main__":
     #             recall_grid=np.linspace(0, 1, 200),  # finer resolution
     #             show_std=True,
     #             save_path=f"verify_paper_results/behavior/trained_classifiers/xx_plot/average_smoothed_sig_1.5/{strat}/{strat}_{PCTS[1]}_{beh}.png")
-    
+
     # summarize_run(f"./verify_paper_results/behavior/trained_classifiers/xx_plot/average_smoothed_sig_1.5/natural/verify_paper_results_xgb_es50_depth3_child1_wnd_natural_0.03334pct_20251109_162153")
     # aggregate_metrics_across_runs(
     #     run_parent_folder=f"./verify_paper_results/behavior/trained_classifiers/xx_plot/average_smoothed_sig_1.5/natural",
     #     behavior_name="attack")
-

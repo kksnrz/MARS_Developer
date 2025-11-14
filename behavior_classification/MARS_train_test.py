@@ -463,7 +463,7 @@ def do_train_smooth(beh_classifier,
         X_tr_s = scaler.transform(X_tr_beh[inds])
         pd_proba_tmp = (clf.predict_proba(X_tr_s))
         y_tr_pred_proba[inds] = pd_proba_tmp
-    
+
     # predict labels on eval set
     if (verbose):
         print('XGB: predict labels on eval set...')
@@ -486,8 +486,8 @@ def do_train_smooth(beh_classifier,
     fn = np.sum((y_pred == 0) & (y_tr_beh_partial[keep_indices_tr] == 1))
     print(f"False Positives: {fp} ({fp/n_total:.2%})")
     print(f"False Negatives: {fn} ({fn/n_total:.2%})")
-    
-    # with gaussian smoothing 
+
+    # with gaussian smoothing
     proba_smooth_tr = y_tr_pred_proba[:, 1]
     proba_smooth_ev = y_ev_pred_proba[:, 1]
     # with gaussian smoothing
@@ -513,17 +513,17 @@ def do_train_smooth(beh_classifier,
     for i in range(clf_params['n_bins']):
         print(f"Bin {i}: train={train_bin_counts[i]}, eval={eval_bin_counts[i]}")
 
-    print("XGB Diags post-smoothing")
-    y_pred = (proba_smooth_tr[keep_indices_tr] >= 0.5).astype(int)
-    n_total = len(y_tr_beh_partial[keep_indices_tr])
-    n_misclassified = np.sum(y_pred != y_tr_beh_partial[keep_indices_tr])
-    frac_misclassified = n_misclassified / n_total
-    print(f"Misclassified frames: {n_misclassified} / {n_total} ({frac_misclassified:.2%})")
+    # print("XGB Diags post-smoothing")
+    # y_pred = (proba_smooth_tr[keep_indices_tr] >= 0.5).astype(int)
+    # n_total = len(y_tr_beh_partial[keep_indices_tr])
+    # n_misclassified = np.sum(y_pred != y_tr_beh_partial[keep_indices_tr])
+    # frac_misclassified = n_misclassified / n_total
+    # print(f"Misclassified frames: {n_misclassified} / {n_total} ({frac_misclassified:.2%})")
 
-    fp = np.sum((y_pred == 1) & (y_tr_beh_partial[keep_indices_tr] == 0))
-    fn = np.sum((y_pred == 0) & (y_tr_beh_partial[keep_indices_tr] == 1))
-    print(f"False Positives: {fp} ({fp/n_total:.2%})")
-    print(f"False Negatives: {fn} ({fn/n_total:.2%})")
+    # fp = np.sum((y_pred == 1) & (y_tr_beh_partial[keep_indices_tr] == 0))
+    # fn = np.sum((y_pred == 0) & (y_tr_beh_partial[keep_indices_tr] == 1))
+    # print(f"False Positives: {fp} ({fp/n_total:.2%})")
+    # print(f"False Negatives: {fn} ({fn/n_total:.2%})")
 
 
 
@@ -539,14 +539,14 @@ def do_train_smooth(beh_classifier,
                                y_tr_beh_partial[keep_indices_tr],
                                'XGB',
                                f"{savedir}xgb_calibration_{beh_name}.png",
-                               n_bins=clf_params['n_bins'])       
+                               n_bins=clf_params['n_bins'])
 
     # ----------------------------------------------------------------------------------------------
     # constrained Baum-Welch training + FBS smoothing (semi supervised branch)
     print(f"Labeled frames count (0, 1): {(y_tr_beh_partial != -1).sum()}, Unlabeled frames count (-1): {(y_tr_beh_partial == -1).sum()}")
     best_model, all_models = cbw.multi_restart_log_cbw([obs_bin_tr],
                                                        [y_tr_beh_partial],
-                                                       [obs_bin_ev], 
+                                                       [obs_bin_ev],
                                                        [y_ev_beh_partial],
                                                        num_states=2,
                                                        num_symbols=clf_params['n_bins'],
@@ -569,7 +569,7 @@ def do_train_smooth(beh_classifier,
                                      random_state=42,
                                      params="",
                                      init_params="")
-    
+
     hmm_bin_cbw.startprob_ = cbw_init_prob_mat
     hmm_bin_cbw.transmat_ = cbw_trans_mat
     hmm_bin_cbw.emissionprob_ = cbw_emission_mat
@@ -612,7 +612,7 @@ def do_train_smooth(beh_classifier,
     # 10 bins case
     hmm_bin.emissionprob_ = mts.get_emissionmat(y_tr_beh_partial[keep_indices_tr], obs_bin_tr[keep_indices_tr], 2, clf_params['n_bins'])
     y_proba_hmm = hmm_bin.predict_proba(obs_bin_tr[keep_indices_tr].reshape((-1, 1)))
-    
+
     y_pred_hmm = np.argmax(y_proba_hmm, axis=1)
     hmm_bin = _stabilize_hmm(hmm_bin)
 
@@ -635,7 +635,7 @@ def do_train_smooth(beh_classifier,
     print("MARS metrics (unsmoothed):")
     precision, recall, f_measure = prf_metrics(y_tr_beh_partial[keep_indices_tr],
                                                y_pred_hmm, beh_name)
-    
+
     beh_classifier.update({'clf': clf,
                            'scaler': scaler,
                            'precision': precision,
@@ -837,7 +837,12 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
         #     X_ev_beh = np.array([X_ev_beh[i, :] for i in newinds_ev if i < len(y_ev_beh)])
         #     y_ev_beh = np.array([y_ev_beh[i] for i in newinds_ev if i < len(y_ev_beh)])
 
+        print("Total labeled frames:", np.sum((y_tr_beh == 0) | (y_tr_beh == 1)))
+        print("Total positive frames:", np.sum(y_tr_beh == 1))
+        print("Total negative frames :", np.sum(y_tr_beh == 0))
+
         print(f"Keeping {clf_params['sampling_pct'] * 100}% of frames for training")
+
         X_tr_beh_labeled, \
             y_tr_beh_labeled, \
                 y_tr_beh_partial, \
@@ -847,7 +852,7 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
                                                               sampling_pct=clf_params['sampling_pct'],
                                                               rng=42,
                                                               cluster_size_frames=clf_params['cluster_size_frames'])
-        
+
         if X_ev != []:
             X_ev_beh_labeled, \
                 y_ev_beh_labeled, \
@@ -888,7 +893,7 @@ def train_classifier(project, train_behaviors, drop_behaviors=[], drop_empty_tri
                         keep_indices_ev,
                         savedir,
                         verbose=clf_params['verbose'])
-    
+
         print('done training!')
     return results
 
@@ -963,9 +968,9 @@ def test_classifier(project, test_behaviors, drop_behaviors=[], drop_empty_trial
                                                             verbose=clf_params['verbose'],
                                                             doPRC=True)
     all_pred = assign_labels(proba_xgb, vocab)
-    
+
     all_pred_fbs_hmm = assign_labels(proba_fbs_hmm, vocab)
-    
+
     all_pred_fbs_hmm_cbw = assign_labels(proba_fbs_hmm_cbw, vocab)
     gt = np.argmax(gt, axis=1)
 
