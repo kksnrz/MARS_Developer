@@ -49,4 +49,4 @@ windows:  # windows for JAABA-style windowing (seconds)
 - 0.033333
 - 0.16667
 - 0.33333
-n_bins: 10 # bins for hmm discretization (xgb probas -> linear bins)
+n_bins: 2 # bins for hmm discretization (xgb probas -> linear bins)

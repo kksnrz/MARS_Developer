@@ -378,7 +378,11 @@ def apply_sampling_strat(X, Y, sampling_strategy='', sampling_pct=1, rng=42,
                                                                          sampling_pct,
                                                                          rng=rng,
                                                                          target_pos_frac=target_pos_frac)
-
+    elif strat == 'baseline':
+        X_labeled, Y_labeled, Y_partial, keep_indices = (*_split_labeled(X,
+                                                                       Y,
+                                                                       np.arange(len(Y), dtype=int)
+                                                                       ), np.arange(len(Y), dtype=int))
 
     else:
         raise ValueError(

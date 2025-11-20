@@ -1,7 +1,6 @@
 import sys
 import os
 import time
-
 import dill
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,6 +17,16 @@ from sklearn.metrics import (precision_recall_curve, precision_score, recall_sco
                              PrecisionRecallDisplay)
 
 DIR_PREFIX = 'verify_paper_results_xgb_es50_depth3_child1_wnd'
+
+# Nature-style muted palette
+NATURE_COLORS = [
+    "#4C72B0",  # blue
+    "#DD8452",  # orange
+    "#55A868",  # green
+    "#C44E52",  # red
+    "#8172B3",  # purple
+    "#937860",  # brown
+]
 
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -228,28 +237,31 @@ def aggregate_metrics_across_runs(run_parent_folder, behavior_name, save_csv=Tru
     return summary_df
 
 
-def find_run_dirs(base_dir, strat, pct):
-    """Find all run dirs matching given strat and pct"""
-    pct_str = str(pct).strip()
+def list_run_dirs(base_dir, strat=None, pct=None):
+    """Return sorted run directories inside the given base_dir."""
+    if not os.path.isdir(base_dir):
+        print(f"[WARN] Base dir does not exist: {base_dir}")
+        return []
 
-    pattern = os.path.join(
-        base_dir,
-        f"{DIR_PREFIX}_{strat}_{pct_str}pct*"
-    )
-
-    dirs = [d for d in glob(pattern) if os.path.isdir(d)]
-    dirs.sort(key=lambda d: os.path.getmtime(d), reverse=True) # newest first
-
-    if not dirs:
-        print(f"No run folders matched for strat='{strat}', pct='{pct_str}'.")
+    if pct is not None:
+        pct_str = str(pct).strip()
     else:
-        print(f"Found {len(dirs)} run dir(s) for strat='{strat}', pct='{pct_str}':")
-        for d in dirs[:5]:
-            ts = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(d)))
-            print(f"   - {d}  (mtime: {ts})")
-        if len(dirs) > 5:
-            print(f"   ... ({len(dirs)-5} more)")
-    return dirs
+        pct_str = None
+
+    if strat is not None and pct is not None:
+        pattern = os.path.join(base_dir, f"{DIR_PREFIX}_{strat}_{pct_str}pct_*")
+    else:
+        pattern = os.path.join(base_dir, f"{DIR_PREFIX}_*")
+
+    run_dirs = [d for d in glob(pattern) if os.path.isdir(d)]
+    run_dirs.sort(key=lambda d: os.path.getmtime(d), reverse=True)
+
+    if not run_dirs:
+        print(f"[INFO] No run directories found in: {base_dir}")
+    else:
+        print(f"[OK] Found {len(run_dirs)} run dirs in: {base_dir}")
+
+    return run_dirs
 
 
 def interpolate_pr_on_fixed_recall(precisions, recalls, recall_grid):
@@ -279,88 +291,145 @@ def load_run_prc_data(folder, behavior):
                                                                    cbw_data["proba"].ravel())
 
 
-def plot_avg_prc_for_strat(base_dir, behavior, strat, pct, recall_grid=None, show_std=True,
-                           save_path=None, threshold=0.5):
-    """Plot average PRC curves across multiple runs for given strat/pct and behavior."""
-    run_dirs = find_run_dirs(base_dir, strat, pct)
-    if not run_dirs:
-        print(f"No matching runs found for strat='{strat}', pct='{pct}'")
+def load_baseline_curve(baseline_run_dir, behavior, recall_grid=None, threshold=0.5):
+    """Load a single fully-labeled baseline run for a behavior (MARS only)."""
+    if baseline_run_dir is None:
+        return None
+
+    if not os.path.isdir(baseline_run_dir):
+        print(f"[BASELINE WARN] baseline_run_dir does not exist: {baseline_run_dir}")
+        return None
+
+    data = load_run_prc_data(baseline_run_dir, behavior)
+    if data is None:
+        print(f"[BASELINE WARN] Missing baseline files for {behavior} in {baseline_run_dir}")
+        return None
+
+    (gt_m, p_m), _ = data  # use supervised baseline
+
+    if len(np.unique(gt_m)) < 2:
+        print(f"[BASELINE WARN] Not enough positive/negative samples for {behavior}")
+        return None
+
+    prec, rec, _ = precision_recall_curve(gt_m, p_m)
+    ap = average_precision_score(gt_m, p_m)
+    thr_prec, thr_rec = calc_prc_tresh(gt_m, p_m, threshold)
+
+    if recall_grid is not None:
+        prec_interp = interpolate_pr_on_fixed_recall(prec, rec, recall_grid)
+        rec_use = recall_grid
+        prec_use = prec_interp
+    else:
+        rec_use = rec
+        prec_use = prec
+
+    return {
+        "recall": rec_use,
+        "precision": prec_use,
+        "ap": ap,
+        "thr_prec": thr_prec,
+        "thr_rec": thr_rec
+    }
+
+
+def _plot_mean_curve(ax, curves, recall_grid, color, linestyle, label,
+                     thr_points=None, marker='o'):
+    """Plot mean PR curve from a list of interpolated precision arrays (same recall_grid)."""
+    if not curves:
         return
 
-    recall_grid = recall_grid if recall_grid is not None else np.linspace(0, 1, 100)
-    mars_curves, cbw_curves = [], []
-    mars_thresh_pts, cbw_thresh_pts = [], []
+    C = np.vstack(curves)
+    mean_p = C.mean(axis=0)
 
-    for run_dir in run_dirs:
-        mars_cbw = load_run_prc_data(run_dir, behavior)
-        if mars_cbw is None:
-            continue
-        (gt_mars, proba_mars), (gt_cbw, proba_cbw) = mars_cbw
+    ax.plot(recall_grid, mean_p, color=color, lw=1.0, linestyle=linestyle, label=label)
 
-        for label, gt, proba, collector, thresh_pts in [
-            ("MARS", gt_mars, proba_mars, mars_curves, mars_thresh_pts),
-            ("CBW", gt_cbw, proba_cbw, cbw_curves, cbw_thresh_pts)]:
+    # Threshold marker (averaged across runs)
+    if thr_points:
+        thr_points = np.array(thr_points)  # shape: (n_runs, 2) -> (prec, rec)
+        mean_prec = np.nanmean(thr_points[:, 0])
+        mean_rec = np.nanmean(thr_points[:, 1])
+        if np.isfinite(mean_prec) and np.isfinite(mean_rec):
+            idx = np.argmin(np.abs(recall_grid - mean_rec))
+            r_plot = recall_grid[idx]
+            p_plot = mean_p[idx]
+            ax.scatter(
+                r_plot,
+                p_plot,
+                s=40,
+                marker=marker,
+                color=color,
+                edgecolor='black',
+                linewidths=0.6,
+                zorder=10,
+                label="_nolegend_"
+            )
 
-            if len(np.unique(gt)) < 2:
-                continue
-            precision, recall, thresholds = precision_recall_curve(gt, proba)
-            interp_precision = interpolate_pr_on_fixed_recall(precision, recall, recall_grid)
-            collector.append(interp_precision)
 
-            prec_05, rec_05 = calc_prc_tresh(gt, proba, threshold)
-            thresh_pts.append((prec_05, rec_05))
+def _plot_baseline_on_ax(ax, baseline_info, label_suffix="Baseline (16.67%)"):
+    """Plot baseline curve with black color and square threshold marker."""
+    if baseline_info is None:
+        return
 
-    def plot_curve(ax, recall_grid, curves, label, color, linestyle, marker_recalls, marker_style):
-        if not curves:
-            print(f"No {label} curves for '{behavior}'")
-            return
-        curves = np.vstack(curves)
-        mean_p = np.mean(curves, axis=0)
-        std_p = np.std(curves, axis=0)
-        ax.plot(recall_grid, mean_p, label=label, color=color, linestyle=linestyle)
+    rec = baseline_info["recall"]
+    prec = baseline_info["precision"]
+    ap = baseline_info["ap"]
+    thr_prec = baseline_info["thr_prec"]
+    thr_rec = baseline_info["thr_rec"]
 
-        if show_std:
-            ax.fill_between(recall_grid, mean_p - std_p, mean_p + std_p, color=color, alpha=0.2)
+    ax.plot(
+        rec,
+        prec,
+        color='black',
+        lw=1.2,
+        linestyle='-',
+        label="_baseline_"
+        # label=f"{label_suffix} (AP={ap:.3f})"
+    )
 
-        if marker_recalls:
-            mean_r = np.nanmean(marker_recalls)
-            r_idx = np.argmin(np.abs(recall_grid - mean_r))
-            r_final = recall_grid[r_idx]
-            p_final = mean_p[r_idx]
-            ax.scatter(r_final, p_final, s=110, color=color, edgecolor='black', marker=marker_style,
-                       linewidth=1.2, zorder=10, label=f"_nolegend_")
+    if np.isfinite(thr_prec) and np.isfinite(thr_rec):
+        ax.scatter(
+            thr_rec,
+            thr_prec,
+            s=45,
+            marker='s',
+            color='black',
+            edgecolor='white',
+            linewidths=0.6,
+            zorder=12,
+            label="_nolegend_"
+        )
 
-    fig, ax = plt.subplots(figsize=(8, 6))
-    plot_curve(ax, recall_grid, mars_curves, "MARS", "tab:blue", '-', mars_thresh_pts, 'o')
-    plot_curve(ax, recall_grid, cbw_curves, "CBW", "tab:red", '--', cbw_thresh_pts, 'D')
 
-    ax.set_title(f"Avg PRC — {behavior.capitalize()} ({strat}, {float(pct)*100:.2f}%)")
-    ax.set_xlabel("Recall")
-    ax.set_ylabel("Precision")
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1.01)
-    ax.grid(True, linestyle='--', alpha=0.5)
+def _format_prc_axis(ax, axis_mode="tight"):
+    ax.set_xlabel("Recall", fontsize=11)
+    ax.set_ylabel("Precision", fontsize=11)
 
-    handles, labels = ax.get_legend_handles_labels()
-    shared_handles = [
-        Line2D([0], [0], marker='o', color='black', markersize=8, linestyle='None', label='T@0.5 MARS'),
-        Line2D([0], [0], marker='D', color='black', markersize=8, linestyle='None', label='T@0.5 CBW')]
+    if axis_mode == "zoom":
+        ax.set_xlim(0.5, 1.0)
+        ax.set_ylim(0.5, 1.0)
+        ax.set_xticks([0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+        ax.set_yticks([0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
+    elif axis_mode == "superzoom":
+        ax.set_xlim(0.65, 1.0)
+        ax.set_ylim(0.65, 1.0)
+        ax.set_xticks([0.7, 0.8, 0.9, 1.0])
+        ax.set_yticks([0.7, 0.8, 0.9, 1.0])
+    else:
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_xticks([0.0, 0.25, 0.5, 0.75, 1.0])
+        ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
 
-    ax.legend(handles + shared_handles, labels + ['T@0.5 MARS', 'T@0.5 CBW'],
-              loc='lower left', frameon=True, title="Variant")
-
-    plt.tight_layout()
-    if save_path:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=300)
-        print(f"Saved PRC plot: {save_path}")
-    plt.show()
+    ax.tick_params(labelsize=8)
+    ax.grid(True, linestyle='--', alpha=0.3, linewidth=0.5)
 
 
 def plot_pr(ax, y, p, label, color, variant,
             show_thresh=True, show_f1=False, threshold=0.5):
-    """Single PR curve helper"""
-    precision, recall, thresholds = precision_recall_curve(y, p)
+    """
+    Single PR curve helper (no averaging).
+    """
+    precision, recall, _ = precision_recall_curve(y, p)
     ap = average_precision_score(y, p)
 
     disp = PrecisionRecallDisplay(precision=precision, recall=recall)
@@ -369,7 +438,8 @@ def plot_pr(ax, y, p, label, color, variant,
         name=f"{label} (AP={ap:.3f})",
         color=color,
         linestyle='--' if variant == "cbw" else '-',
-        drawstyle="steps-post"
+        drawstyle="steps-post",
+        linewidth=1.0
     )
     ax = disp.ax_
 
@@ -377,17 +447,112 @@ def plot_pr(ax, y, p, label, color, variant,
         prec_05, rec_05 = calc_prc_tresh(y, p, threshold)
         if np.isfinite(prec_05) and np.isfinite(rec_05):
             marker = "o" if variant == "mars" else "D"
-            ax.scatter(rec_05, prec_05,
-                       s=110, marker=marker, color=color,
-                       edgecolor="black", linewidths=1.0,
-                       zorder=12, label="_nolegend_")
+            ax.scatter(
+                rec_05,
+                prec_05,
+                s=40,
+                marker=marker,
+                color=color,
+                edgecolor="black",
+                linewidths=0.6,
+                zorder=12,
+                label="_nolegend_"
+            )
 
     if show_f1:
         f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
         j = np.nanargmax(f1)
-        ax.scatter(recall[j], precision[j], s=140, marker='*', color=color,
-                   edgecolor='black', linewidth=1.2)
+        ax.scatter(
+            recall[j],
+            precision[j],
+            s=60,
+            marker='*',
+            color=color,
+            edgecolor='black',
+            linewidth=0.6
+        )
     return ax
+
+def _make_three_panel_figure(vstack=False):
+    """Create vertical or horizontal aligned three panel figure"""
+    if vstack:
+        fig = plt.figure(figsize=(6, 10))
+        gs = fig.add_gridspec(
+            4, 1,
+            height_ratios=[1.4, 1.4, 1.4, 0.25],
+            hspace=0.5,
+            top=0.93, bottom=0.06, left=0.10, right=0.97
+        )
+        axes = [fig.add_subplot(gs[i, 0]) for i in range(3)]
+    else:
+        fig = plt.figure(figsize=(10, 5))
+        gs = fig.add_gridspec(
+            2, 3,
+            height_ratios=[10, 2],
+            hspace=0.05,
+            wspace=0.18,
+            left=0.06,
+            right=0.99,
+            top=0.90,
+            bottom=0.17,
+        )
+        axes = [fig.add_subplot(gs[0, i]) for i in range(3)]
+    for ax in axes:
+        ax.set_aspect('equal', adjustable='box')
+    return fig, axes
+
+
+def _build_unified_legend(fig, axes, baseline_label="Baseline (16.67%)", vstack=False):
+    """Collect handles/labels from all axes"""
+    handles_all, labels_all = [], []
+    for ax in axes:
+        h, l = ax.get_legend_handles_labels()
+        handles_all.extend(h)
+        labels_all.extend(l)
+
+    label_to_handle = {}
+    for h, lab in zip(handles_all, labels_all):
+        if lab in ("_nolegend_", "_baseline_"):
+            continue
+        if lab not in label_to_handle:
+            label_to_handle[lab] = h
+
+    extra_handles = [
+        Line2D([0], [0], color='black', lw=1.2, linestyle='-',
+               label=baseline_label),
+        Line2D([0], [0], marker='o', color='black', linestyle='None',
+               label='T@0.5 MARS', markersize=5),
+        Line2D([0], [0], marker='D', color='black', linestyle='None',
+               label='T@0.5 CBW', markersize=5),
+        Line2D([0], [0], marker='s', color='black', linestyle='None',
+               label='T@0.5 Baseline ', markersize=5),
+    ]
+    extra_labels = [h.get_label() for h in extra_handles]
+
+
+    if vstack:
+        fig.legend(
+            list(label_to_handle.values()) + extra_handles,
+            list(label_to_handle.keys()) + extra_labels,
+            loc='lower center',
+            bbox_to_anchor=(0.5, 0.02),
+            ncol=3,
+            frameon=True,
+            fontsize=8,
+        )
+
+        plt.subplots_adjust(bottom=0.22)
+    else:
+        fig.legend(
+            list(label_to_handle.values()) + extra_handles,
+            list(label_to_handle.keys()) + extra_labels,
+            loc='lower center',
+            bbox_to_anchor=(0.5, 0.06),
+            ncol=3,
+            frameon=True,
+            fontsize=8,
+        )
+        plt.subplots_adjust(bottom=0.12)
 
 
 def plot_pr_curves(base_path,
@@ -398,156 +563,451 @@ def plot_pr_curves(base_path,
                    show_thresh=True,
                    show_f1=False,
                    save_figs=True,
-                   threshold=0.5):
-    """Plot PR curves for given sampling strategies and percentages.
-    - SINGLE MODE: Created unified PRC for all behaviors for given strat, pct
-    - MULTI MODE: Plots multiple curves for strat/pct combinations separated by behavior.
-    """
+                   threshold=0.5,
+                   baseline_run_dir=None,
+                   axis_mode="tight",
+                   vstack=False):
+    """Plot exact three panel PR curve"""
     behavior_colors = {
-        'attack': 'tab:red',
-        'investigation': 'tab:green',
-        'mount': 'tab:blue'
-        }
+        'attack': NATURE_COLORS[3],
+        'investigation': NATURE_COLORS[2],
+        'mount': NATURE_COLORS[0]
+    }
 
     if exact_folder is not None:
         single_mode = True
     else:
         single_mode = (len(strats) == 1 and len(pcts) == 1)
+
     print(f"\nMode: {'Single' if single_mode else 'Multi'}\n")
 
-    # SINGLE MODE
-    if single_mode:
+    if not single_mode:
+        raise ValueError("plot_pr_curves is intended for single (strat,pct) or exact_folder.")
+
+    if exact_folder is not None:
+        strat, pct = strats, pcts
+        run_dir = exact_folder
+    else:
         strat, pct = strats[0], pcts[0]
-        if exact_folder is not None:
-            run_dirs = [exact_folder]
-        else:
-            run_dirs = find_run_dirs(base_path, strat, pct)
+        base_dir = os.path.join(base_path, strat, pct)
+        run_dirs = list_run_dirs(base_dir, strat, pct)
         if not run_dirs:
+            print("No runs found.")
             return
         run_dir = run_dirs[0]
-        print(f"Using newest run dir: {run_dir}")
 
-        fig, ax = plt.subplots(figsize=(9, 7))
-        plotted = False
+    print(f"Using run dir: {run_dir}")
 
-        for beh in behaviors:
-            mars_cbw = load_run_prc_data(run_dir, beh)
-            if mars_cbw is None or mars_cbw[0] is None:
-                print(f"Missing outputs for {beh} in {run_dir}")
+    fig, axes = _make_three_panel_figure(vstack=vstack)
+
+    for ax, beh in zip(axes, behaviors):
+        mars_cbw = load_run_prc_data(run_dir, beh)
+        if mars_cbw is None:
+            print(f"Missing outputs for {beh} in {run_dir}")
+            continue
+
+        (y_m, p_m), (y_c, p_c) = mars_cbw
+        color = behavior_colors.get(beh, NATURE_COLORS[0])
+
+        plot_pr(ax, y_m, p_m, f"{beh.capitalize()} MARS", color, "mars",
+                show_thresh, show_f1, threshold=threshold)
+        plot_pr(ax, y_c, p_c, f"{beh.capitalize()} CBW", color, "cbw",
+                show_thresh, show_f1, threshold=threshold)
+
+        leg = ax.get_legend()
+        if leg is not None:
+            leg.remove()
+
+        baseline_info = load_baseline_curve(baseline_run_dir, beh, recall_grid=None,
+                                            threshold=threshold)
+        _plot_baseline_on_ax(ax, baseline_info)
+
+        ax.set_title(beh.capitalize(), fontsize=9)
+        ax.set_aspect('auto')
+        _format_prc_axis(ax, axis_mode=axis_mode)
+
+    fig.suptitle(f"Precision-Recall ({strat}, {float(pct)*100:.2f}%)", fontsize=11)
+    _build_unified_legend(fig, axes, vstack=vstack)
+
+    if save_figs:
+        out = os.path.join(run_dir, f"PRC_3panel_{strat}_{pct}.pdf")
+        Path(run_dir).mkdir(parents=True, exist_ok=True)
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        print(f"Saved: {out}")
+
+    # plt.show()
+
+
+def plot_pr_curves_all_runs(base_path, strat, pct, behaviors, **kwargs):
+    base_dir = os.path.join(base_path, strat, pct)
+    run_dirs = list_run_dirs(base_dir, strat, pct)
+    if not run_dirs:
+        print("No runs found.")
+        return
+
+    for rd in run_dirs:
+        print(f"\nPlotting for run: {rd}")
+        plot_pr_curves(
+            base_path=base_path,
+            strats=strat,
+            pcts=pct,
+            behaviors=behaviors,
+            exact_folder=rd,
+            **kwargs
+        )
+
+
+def plot_avg_prc_for_strat(base_path,
+                           behaviors,
+                           strat,
+                           pct,
+                           recall_grid=None,
+                           show_std=False,
+                           save_path=None,
+                           threshold=0.5,
+                           baseline_run_dir=None,
+                           axis_mode="tight",
+                           vstack=False):
+    """Plot average three panel PRC for a fixed (strat, pct) across multiple runs."""
+    recall_grid = recall_grid if recall_grid is not None else np.linspace(0, 1, 200)
+    strat_pct_dir = os.path.join(base_path, strat, pct)
+    run_dirs = list_run_dirs(strat_pct_dir, strat, pct)
+    if not run_dirs:
+        print(f"No matching runs found for strat='{strat}', pct='{pct}'")
+        return
+
+    fig, axes = _make_three_panel_figure(vstack=vstack)
+
+    for ax, beh in zip(axes, behaviors):
+        mars_curves, cbw_curves = [], []
+        mars_thr_pts, cbw_thr_pts = [], []
+
+        for rd in run_dirs:
+            mars_cbw = load_run_prc_data(rd, beh)
+            if mars_cbw is None:
                 continue
 
-            (y_m, p_m), (y_c, p_c) = mars_cbw
-            color = behavior_colors.get(beh, 'tab:gray')
+            (gt_m, pm), (gt_c, pc) = mars_cbw
 
-            plot_pr(ax, y_m, p_m, f"{beh.capitalize()} MARS", color, "mars",
-                    show_thresh, show_f1, threshold=threshold)
-            plot_pr(ax, y_c, p_c, f"{beh.capitalize()} CBW", color, "cbw",
-                    show_thresh, show_f1, threshold=threshold)
-            plotted = True
+            for gt, p, collector, thr_list in [
+                (gt_m, pm, mars_curves, mars_thr_pts),
+                (gt_c, pc, cbw_curves, cbw_thr_pts)
+            ]:
+                if len(np.unique(gt)) < 2:
+                    continue
+                prec, rec, _ = precision_recall_curve(gt, p)
+                interp_prec = interpolate_pr_on_fixed_recall(prec, rec, recall_grid)
+                collector.append(interp_prec)
 
-        if not plotted:
-            print("Nothing plotted (missing files).")
-            return
+                thr_p, thr_r = calc_prc_tresh(gt, p, threshold)
+                thr_list.append((thr_p, thr_r))
 
-        ax.set_title(f"Precision–Recall Curves ({strat}, {float(pct)*100:.2f}%)", fontsize=15)
-        ax.set_xlabel("Recall")
-        ax.set_ylabel("Precision")
-        ax.grid(alpha=0.4, linestyle="--")
-        ax.legend(loc="lower left", frameon=True, title="Behavior / Variant")
+        color_m = NATURE_COLORS[0]
+        color_c = NATURE_COLORS[3]
 
-        handles, labels = ax.get_legend_handles_labels()
+        _plot_mean_curve(ax, mars_curves, recall_grid, color_m, '-', "MARS",
+                         thr_points=mars_thr_pts, marker='o')
+        _plot_mean_curve(ax, cbw_curves, recall_grid, color_c, '--', "CBW",
+                         thr_points=cbw_thr_pts, marker='D')
 
-        shared_handles = [
-            Line2D([0], [0], marker='o', color='black', markersize=9,
-                   linestyle='None', label='T@0.5 MARS'),
-            Line2D([0], [0], marker='D', color='black', markersize=9,
-                   linestyle='None', label='T@0.5 CBW')
-        ]
+        baseline_info = load_baseline_curve(baseline_run_dir, beh, recall_grid=recall_grid,
+                                            threshold=threshold)
+        _plot_baseline_on_ax(ax, baseline_info)
 
-        ax.legend(handles + shared_handles, labels + ['T@0.5 MARS', 'T@0.5 CBW'],
-                  loc='lower left', frameon=True, title="Behavior / Variant")
+        ax.set_title(beh.capitalize(), fontsize=11)
+        ax.set_aspect('auto')
+        _format_prc_axis(ax, axis_mode=axis_mode)
 
-        ax.set_xlim([0.0, 1.01])
-        ax.set_ylim([0.0, 1.01])
-        plt.tight_layout()
+    fig.suptitle(f"Avg. Precision-Recall ({strat}, {float(pct)*100:.2f}%)", fontsize=11)
 
-        if save_figs:
-            out = os.path.join(run_dir, f"PRC_{strat}_{pct}.png")
-            Path(run_dir).mkdir(parents=True, exist_ok=True)
-            plt.savefig(out, dpi=300, bbox_inches="tight")
-            print(f"Saved: {out}")
+    _build_unified_legend(fig, axes, vstack=vstack)
 
-        plt.show()
-        return
-    else:
-        # MULTI MODE
-        combo_list = [(s, p) for s in strats for p in pcts]
-        cmap = plt.cm.get_cmap("tab20", max(1, len(combo_list)))
-        COLOR_MAP = {combo: cmap(i % 20) for i, combo in enumerate(combo_list)}
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=300)
+        print(f"Saved PRC plot: {save_path}")
 
-        for beh in behaviors:
-            fig, ax = plt.subplots(figsize=(10, 8))
-            plotted_any = False
+    # plt.show()
 
-            for strat in strats:
-                for pct in pcts:
-                    run_dirs = find_run_dirs(base_path, strat, pct)
-                    if not run_dirs:
+
+def plot_avg_prc_across_pcts_for_strat(base_path,
+                                       behaviors,
+                                       strat,
+                                       pcts,
+                                       recall_grid=None,
+                                       show_std=False,
+                                       save_path=None,
+                                       threshold=0.5,
+                                       baseline_run_dir=None,
+                                       axis_mode="tight",
+                                       vstack=False):
+    """Plot average three panel PRC for a fixed strategy across multiple sampling pcts."""
+    recall_grid = recall_grid if recall_grid is not None else np.linspace(0, 1, 200)
+
+    fig, axes = _make_three_panel_figure(vstack=vstack)
+
+    for ax, beh in zip(axes, behaviors):
+        for idx, pct in enumerate(pcts):
+            pct_dir = os.path.join(base_path, strat, pct)
+            run_dirs = list_run_dirs(pct_dir, strat, pct)
+            if not run_dirs:
+                continue
+
+            color = NATURE_COLORS[idx % len(NATURE_COLORS)]
+
+            mars_curves, cbw_curves = [], []
+            mars_thr_pts, cbw_thr_pts = [], []
+
+            for rd in run_dirs:
+                mars_cbw = load_run_prc_data(rd, beh)
+                if mars_cbw is None:
+                    continue
+                (gt_m, pm), (gt_c, pc) = mars_cbw
+
+                for gt, p, collector, thr_list in [
+                    (gt_m, pm, mars_curves, mars_thr_pts),
+                    (gt_c, pc, cbw_curves, cbw_thr_pts)
+                ]:
+                    if len(np.unique(gt)) < 2:
                         continue
-                    run_dir = run_dirs[0]
+                    prec, rec, _ = precision_recall_curve(gt, p)
+                    interp_prec = interpolate_pr_on_fixed_recall(prec, rec, recall_grid)
+                    collector.append(interp_prec)
+                    thr_p, thr_r = calc_prc_tresh(gt, p, threshold)
+                    thr_list.append((thr_p, thr_r))
 
-                    mars_cbw = load_run_prc_data(run_dir, beh)
-                    if mars_cbw is None or mars_cbw[0] is None:
+            pct_label = f"{float(pct)*100:.2f}%"
+
+            _plot_mean_curve(ax, mars_curves, recall_grid, color, '-',
+                             f"MARS {pct_label}", thr_points=mars_thr_pts, marker='o')
+            _plot_mean_curve(ax, cbw_curves, recall_grid, color, '--',
+                             f"CBW {pct_label}", thr_points=cbw_thr_pts, marker='D')
+
+        baseline_info = load_baseline_curve(baseline_run_dir, beh, recall_grid=recall_grid,
+                                            threshold=threshold)
+        _plot_baseline_on_ax(ax, baseline_info)
+
+        ax.set_title(beh.capitalize(), fontsize=9)
+        ax.set_aspect('auto')
+        _format_prc_axis(ax, axis_mode=axis_mode)
+
+    fig.suptitle(f"Avg. Precision-Recall ({strat}, varying label fractions)", fontsize=10)
+
+    _build_unified_legend(fig, axes, vstack=vstack)
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=300)
+        print(f"Saved to {save_path}")
+
+    # plt.show()
+
+
+def plot_avg_prc_across_strats_for_pct(base_path,
+                                       behaviors,
+                                       pct,
+                                       strats,
+                                       recall_grid=None,
+                                       show_std=False,
+                                       save_path=None,
+                                       threshold=0.5,
+                                       baseline_run_dir=None,
+                                       axis_mode="tight",
+                                       vstack=False):
+    """Plot average three panel PRC for fixed label fraction across multiple strategies."""
+    recall_grid = recall_grid if recall_grid is not None else np.linspace(0, 1, 200)
+
+    fig, axes = _make_three_panel_figure(vstack=vstack)
+
+    for ax, beh in zip(axes, behaviors):
+        for idx, strat in enumerate(strats):
+            pct_dir = os.path.join(base_path, strat, pct)
+            run_dirs = list_run_dirs(pct_dir, strat, pct)
+            if not run_dirs:
+                continue
+
+            color = NATURE_COLORS[idx % len(NATURE_COLORS)]
+
+            mars_curves, cbw_curves = [], []
+            mars_thr_pts, cbw_thr_pts = [], []
+
+            for rd in run_dirs:
+                mars_cbw = load_run_prc_data(rd, beh)
+                if mars_cbw is None:
+                    continue
+                (gt_m, pm), (gt_c, pc) = mars_cbw
+
+                for gt, p, collector, thr_list in [
+                    (gt_m, pm, mars_curves, mars_thr_pts),
+                    (gt_c, pc, cbw_curves, cbw_thr_pts)
+                ]:
+                    if len(np.unique(gt)) < 2:
                         continue
+                    prec, rec, _ = precision_recall_curve(gt, p)
+                    interp_prec = interpolate_pr_on_fixed_recall(prec, rec, recall_grid)
+                    collector.append(interp_prec)
+                    thr_p, thr_r = calc_prc_tresh(gt, p, threshold)
+                    thr_list.append((thr_p, thr_r))
 
-                    try:
-                        (y_m, p_m), (y_c, p_c) = mars_cbw
-                    except Exception as e:
-                        print(f"Error reading {beh} {strat} {pct}: {e}")
-                        continue
+            _plot_mean_curve(ax, mars_curves, recall_grid, color, '-',
+                             f"MARS {strat}", thr_points=mars_thr_pts, marker='o')
+            _plot_mean_curve(ax, cbw_curves, recall_grid, color, '--',
+                             f"CBW {strat}", thr_points=cbw_thr_pts, marker='D')
 
-                    color = COLOR_MAP[(strat, pct)]
+        baseline_info = load_baseline_curve(baseline_run_dir, beh, recall_grid=recall_grid,
+                                            threshold=threshold)
+        _plot_baseline_on_ax(ax, baseline_info)
 
-                    # Same color for MARS/CBW, different linestyle; threshold markers
-                    plot_pr(ax, y_m, p_m,
-                            f"{strat} {float(pct)*100:.1f}% MARS", color, "mars",
-                            show_thresh=True, show_f1=False, threshold=threshold)
-                    plot_pr(ax, y_c, p_c,
-                            f"{strat} {float(pct)*100:.1f}% CBW", color, "cbw",
-                            show_thresh=True, show_f1=False, threshold=threshold)
-                    plotted_any = True
+        ax.set_title(beh.capitalize(), fontsize=10)
+        ax.set_aspect('auto')
+        _format_prc_axis(ax, axis_mode=axis_mode)
 
-            if plotted_any:
-                ax.set_title(f'Precision–Recall — {beh.capitalize()}', fontsize=15)
-                ax.set_xlabel("Recall")
-                ax.set_ylabel("Precision")
-                ax.grid(alpha=0.4, linestyle="--")
-                ax.legend(title="Sampling / Variant", fontsize=9,
-                          loc="lower left", frameon=True)
+    fig.suptitle(f"Avg. Precision-Recall ({float(pct)*100:.2f}%, varying strategies)",
+                 fontsize=12)
+    _build_unified_legend(fig, axes, vstack=vstack)
 
-                handles, labels = ax.get_legend_handles_labels()
-                shared_handles = [
-                    Line2D([0], [0], marker='o', color='black', markersize=9,
-                           linestyle='None', label='T@0.5 MARS'),
-                    Line2D([0], [0], marker='D', color='black', markersize=9,
-                           linestyle='None', label='T@0.5 CBW')
-                ]
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=300)
+        print(f"Saved to {save_path}")
 
-                ax.legend(handles + shared_handles, labels + ['T@0.5 MARS', 'T@0.5 CBW'],
-                          loc='lower left', frameon=True, title="Sampling / Variant")
+    # plt.show()
 
-                ax.set_xlim([0.0, 1.01])
-                ax.set_ylim([0.0, 1.01])
-                plt.tight_layout()
 
-                if save_figs:
-                    summary_out = os.path.join(base_path, f"PRC_multi_{beh}.png")
-                    plt.savefig(summary_out, dpi=300, bbox_inches="tight")
-                    print(f"Saved summary: {summary_out}")
+def plot_f1_vs_pct(base_path,
+                   behaviors,
+                   strats,
+                   pcts,
+                   save_path=None,
+                   baseline_f1=None,
+                   vstack=True):
+    def read_metric(df, key):
+        try:
+            return float(df.loc[key, "0"])
+        except Exception:
+            return np.nan
 
-                plt.show()
-            else:
-                print(f"No data found for behavior: {beh}")
+    pcts_float = np.arange(len(pcts))
+    xtick_labels = [f"{100*float(p):.2f}%" for p in pcts]
+
+    fig, axes = _make_three_panel_figure(vstack=vstack)
+
+    for ax in axes:
+        ax.set_aspect("auto")
+
+    n_strats = len(strats)
+    bar_width = 0.08
+    group_width = (bar_width * 2) * n_strats
+
+    offsets = np.linspace(
+        -group_width/2,
+        +group_width/2 - bar_width*2,
+        n_strats
+    )
+
+    for b_idx, beh in enumerate(behaviors):
+        ax = axes[b_idx]
+        ax.set_title(f"{beh.capitalize()}", fontsize=10)
+
+        if baseline_f1:
+            bval = baseline_f1.get(beh, None)
+            if bval is not None:
+                ax.axhline(bval, color="black", linestyle="--", lw=1.2)
+                ax.text(
+                    0.99, bval + 0.01,
+                    f"{bval:.3f}",
+                    ha="right", va="bottom",
+                    transform=ax.get_yaxis_transform(),
+                    fontsize=9,
+                )
+
+        for s_idx, strat in enumerate(strats):
+            color = NATURE_COLORS[s_idx % len(NATURE_COLORS)]
+            f1_mars, f1_cbw = [], []
+
+            for pct in pcts:
+                csv_path = os.path.join(
+                    base_path, strat, pct,
+                    f"summary_metrics_{beh}.csv"
+                )
+
+                if not os.path.exists(csv_path):
+                    f1_mars.append(np.nan)
+                    f1_cbw.append(np.nan)
+                    continue
+
+                df = pd.read_csv(csv_path, index_col=0)
+                f1_mars.append(read_metric(df, "f1_mars_mean"))
+                f1_cbw.append(read_metric(df, "f1_cbw_mean"))
+
+            f1_mars = np.array(f1_mars)
+            f1_cbw = np.array(f1_cbw)
+
+            x_mars = pcts_float + offsets[s_idx]
+            x_cbw  = pcts_float + offsets[s_idx] + bar_width
+
+            ax.bar(
+                x_mars, f1_mars,
+                width=bar_width,
+                color=color,
+                label=f"{strat} (MARS)" if b_idx == 0 else "_nolegend_"
+            )
+
+            ax.bar(
+                x_cbw, f1_cbw,
+                width=bar_width,
+                color=color,
+                edgecolor="black",
+                hatch="///",
+                label=f"{strat} (CBW)" if b_idx == 0 else "_nolegend_"
+            )
+
+        ax.set_title(beh.capitalize(), fontsize=11)
+        ax.set_ylabel("F1 Score", fontsize=11)
+        ax.set_ylim(0.50, 1.0)
+        ax.grid(True, linestyle="--", alpha=0.35, linewidth=0.4)
+        ax.set_xticks(pcts_float)
+        ax.set_xticklabels(xtick_labels)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    seen = set()
+    final_handles = []
+    final_labels = []
+
+    for h, l in zip(handles, labels):
+        if l not in seen and l != "_nolegend_":
+            seen.add(l)
+            final_handles.append(h)
+            final_labels.append(l)
+
+    baseline_handle = Line2D(
+        [0], [0],
+        color='black',
+        linestyle='--',
+        lw=1.4,
+        label='Baseline (16.67%)'
+    )
+
+    fig.legend(
+        final_handles + [baseline_handle],
+        final_labels + ["Baseline (16.67%)"],
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.03),
+        ncol=3,
+        fontsize=9,
+        frameon=True
+    )
+
+    fig.suptitle(f"F1 vs Label Fraction", fontsize=12)
+    fig.subplots_adjust(bottom=0.18, hspace=0.45)
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=300)
+        print(f"Saved F1 plot: {save_path}")
+
+
+    plt.show()
 
 
 def plot_mean_bout_duration(df, skip_behaviors=None, save_path=None):
@@ -614,6 +1074,7 @@ def plot_bout_duration_histogram(df, skip_behaviors=None, save_path=None):
     plt.show()
 
 
+
 def plot_bout_duration_box(df, skip_behaviors=None, save_path=None):
     """Plots bout duration box plot by behavior."""
     if skip_behaviors:
@@ -627,25 +1088,39 @@ def plot_bout_duration_box(df, skip_behaviors=None, save_path=None):
     durations.name = 'bout_duration'
     df_boxplot = df.drop('bout_durations', axis=1).join(durations)
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    df_boxplot.boxplot(column='bout_duration',
-                       by=df_boxplot.index,
-                       ax=ax, vert=True,
-                       patch_artist=True,
-                       showfliers=False)
+    fig, ax = plt.subplots(figsize=(7, 5))
 
-    plt.ylabel('Bout Duration (seconds)')
-    plt.xlabel('Behavior')
-    plt.title('Distribution of Bout Durations by Behavior')
+    bp = df_boxplot.boxplot(
+        column="bout_duration",
+        by=df_boxplot.index,
+        ax=ax,
+        vert=True,
+        patch_artist=True,
+        showfliers=False,
+        medianprops=dict(color="black", linewidth=2),
+        whiskerprops=dict(color="black"),
+        capprops=dict(color="black"),
+        boxprops=dict(color="black")
+    )
+
+    for patch in ax.artists:
+        patch.set_facecolor(NATURE_COLORS[0])
+
+    # Center x-tick labels
+    plt.xticks(rotation=0, ha="center")
+
+    plt.ylabel('Bout Duration (seconds)', fontsize=11)
+    plt.xlabel('Behavior', fontsize=11)
+    plt.title('Distribution of Bout Durations by Behavior', fontsize=12)
     plt.suptitle('')
 
-    plt.xticks(rotation=45, ha='right')
+    plt.xticks(rotation=0, ha='center')
     plt.tight_layout()
 
     if save_path:
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
-        plt.savefig(f"{save_path}bout_duration_boxplot.png")
+        os.makedirs(save_path, exist_ok=True)
+        plt.savefig(f"{save_path}bout_duration_boxplot.pdf")
+
     plt.show()
 
 
@@ -867,41 +1342,89 @@ def plot_bout_summary():
 
 
 if __name__ == "__main__":
-    # plot_bout_summary()
 
+    BASE_PATH = './verify_paper_results/behavior/trained_classifiers/analysis/2x2_hmms'
     BEHAVIORS = ["attack", "investigation", "mount"]
-    DIR_PREFIX = 'verify_paper_results_xgb_es50_depth3_child1_wnd'
-
-    BASE_PATH = './verify_paper_results/behavior/trained_classifiers/'#analysis/2x10_hmms/unsmoothed_dirichilet_soft_a'
 
     STRATS = ["natural", "simple_random", "stratified", "systematic", "cluster", "purposive"]
+    # STRATS = ["natural", "simple_random", "stratified", "systematic", "cluster", "purposive"]
     PCTS = ['0.01667','0.03334', '0.06668', '0.13336']
-    # STRATS = ["natural"]
+    # PCTS = ['0.01667', '0.03334', '0.06668', '1']
 
-    plot_pr_curves(
-        base_path=BASE_PATH,
-        strats=STRATS,
-        pcts=PCTS,
-        behaviors=BEHAVIORS,
-        exact_folder="./verify_paper_results/behavior/trained_classifiers/verify_paper_results_xgb_es50_depth3_child1_wnd_cluster_0.01667pct_20251114_033412",
-        show_thresh=True,
-        show_f1=False,
-        save_figs=True,
-        threshold=0.5
+    baseline_run_dir = (
+        f"{BASE_PATH}/baseline/1/"
+        f"{DIR_PREFIX}_baseline_1pct_20251119_102858"
     )
 
-    # for beh in BEHAVIORS:
-    #     for strat in STRATS:
-    #         plot_avg_prc_for_strat(
-    #             base_dir=f"verify_paper_results/behavior/trained_classifiers/xx_plot/average_smoothed_sig_1.5/{strat}",
-    #             behavior=beh,
-    #             strat=strat,
-    #             pct=PCTS[1],
-    #             recall_grid=np.linspace(0, 1, 200),  # finer resolution
-    #             show_std=True,
-    #             save_path=f"verify_paper_results/behavior/trained_classifiers/xx_plot/average_smoothed_sig_1.5/{strat}/{strat}_{PCTS[1]}_{beh}.png")
+    plot_bout_summary()
 
-    # summarize_run(f"./verify_paper_results/behavior/trained_classifiers/xx_plot/average_smoothed_sig_1.5/natural/verify_paper_results_xgb_es50_depth3_child1_wnd_natural_0.03334pct_20251109_162153")
-    # aggregate_metrics_across_runs(
-    #     run_parent_folder=f"./verify_paper_results/behavior/trained_classifiers/xx_plot/average_smoothed_sig_1.5/natural",
-    #     behavior_name="attack")
+    for strat in STRATS:
+    #     # aggregate_metrics_across_runs(run_parent_folder=f"{BASE_PATH}/{strat}")
+        for pct in PCTS:
+    #         # # 1) Exact PRC for a specific run
+    #         # plot_pr_curves(
+    #         #     base_path=BASE_PATH,
+    #         #     strats=[strat],
+    #         #     pcts=[pct],
+    #         #     behaviors=BEHAVIORS,
+    #         #     exact_folder=None,      # or an explicit run dir
+    #         #     save_figs=True,
+    #         #     baseline_run_dir=baseline_run_dir,
+    #         #     axis_mode="zoom",
+    #         #     # vstack=True
+    #         # )
+    #         plot_pr_curves_all_runs(
+    #                     base_path=BASE_PATH,
+    #                     strat=strat,
+    #                     pct=pct,
+    #                     behaviors=BEHAVIORS,
+    #                     save_figs=True,
+    #                     baseline_run_dir=baseline_run_dir,
+    #                     axis_mode="zoom")
+
+            # 2) Avg PRC for one strat & one pct
+            plot_avg_prc_for_strat(
+                base_path=BASE_PATH,
+                behaviors=BEHAVIORS,
+                strat=strat,
+                pct=pct,
+                baseline_run_dir=baseline_run_dir,
+                axis_mode="zoom",
+                save_path=os.path.join(BASE_PATH, strat, pct, f"avg_prc_for_{strat}_{pct}.pdf"),
+                vstack=True
+            )
+
+    #     # 3) Avg PRC for one strat across pcts
+    #     plot_avg_prc_across_pcts_for_strat(
+    #         base_path=BASE_PATH,
+    #         behaviors=BEHAVIORS,
+    #         strat=strat,
+    #         pcts=PCTS,
+    #         baseline_run_dir=baseline_run_dir,
+    #         axis_mode="zoom",
+    #         save_path=os.path.join(BASE_PATH, strat, f"avg_prc_for_{strat}.pdf"),
+    #         vstack=True
+    #     )
+
+    # # 4) Avg PRC for one pct across strats
+    # for pct in PCTS:
+    #     plot_avg_prc_across_strats_for_pct(
+    #         base_path=BASE_PATH,
+    #         behaviors=BEHAVIORS,
+    #         pct=pct,
+    #         strats=STRATS,
+    #         baseline_run_dir=baseline_run_dir,
+    #         axis_mode="zoom",
+    #         save_path=os.path.join(BASE_PATH, f"avg_prc_for_{pct}.pdf"),
+    #         vstack=True
+    #             )
+
+    plot_f1_vs_pct(
+        base_path=BASE_PATH,
+        behaviors=BEHAVIORS,
+        strats=STRATS,
+        pcts=['0.01667', '0.03334', '0.06668', '0.13336'],
+        save_path=os.path.join(BASE_PATH, "F1_strats_pcts.pdf"),
+        baseline_f1={"attack":0.841, "investigation":0.815, "mount":0.952}
+        )
+    

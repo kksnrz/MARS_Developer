@@ -487,7 +487,7 @@ def do_train_smooth(beh_classifier,
     print(f"False Positives: {fp} ({fp/n_total:.2%})")
     print(f"False Negatives: {fn} ({fn/n_total:.2%})")
 
-    # with gaussian smoothing
+    # without gaussian smoothing
     proba_smooth_tr = y_tr_pred_proba[:, 1]
     proba_smooth_ev = y_ev_pred_proba[:, 1]
     # with gaussian smoothing
@@ -531,7 +531,7 @@ def do_train_smooth(beh_classifier,
     ana.plot_xgb_proba_diags(proba=y_tr_pred_proba[keep_indices_tr, 1],
                              labels=y_tr_beh_partial[keep_indices_tr],
                              save_path=f"{savedir}xgb_proba_diagnostics_{beh_name}.png",
-                             bin_edges=bin_edges,
+                             bin_edges=[0, 0.5, 1],#bin_edges,
                              threshold=0.5,
                              log_scale=True)
 
@@ -544,6 +544,8 @@ def do_train_smooth(beh_classifier,
     # ----------------------------------------------------------------------------------------------
     # constrained Baum-Welch training + FBS smoothing (semi supervised branch)
     print(f"Labeled frames count (0, 1): {(y_tr_beh_partial != -1).sum()}, Unlabeled frames count (-1): {(y_tr_beh_partial == -1).sum()}")
+    print("Unique labels:", np.unique(y_tr_beh_partial))
+
     best_model, all_models = cbw.multi_restart_log_cbw([obs_bin_tr],
                                                        [y_tr_beh_partial],
                                                        [obs_bin_ev],
@@ -609,7 +611,6 @@ def do_train_smooth(beh_classifier,
     hmm_bin.startprob_ = np.array([np.sum(y_tr_beh_partial[keep_indices_tr] == i) / float(len(y_tr_beh_partial[keep_indices_tr])) for i in range(2)])
     hmm_bin.transmat_ = mts.get_transmat(y_tr_beh_partial[keep_indices_tr], 2)
 
-    # 10 bins case
     hmm_bin.emissionprob_ = mts.get_emissionmat(y_tr_beh_partial[keep_indices_tr], obs_bin_tr[keep_indices_tr], 2, clf_params['n_bins'])
     y_proba_hmm = hmm_bin.predict_proba(obs_bin_tr[keep_indices_tr].reshape((-1, 1)))
 
@@ -698,6 +699,17 @@ def do_test(name_classifier, X_te_labeled, y_te_beh_labeled, verbose=0, doPRC=0)
 
     y_pred_class = np.argmax(y_pred_proba, axis=1)
     preds_xgb = y_pred_class
+
+    print("XGB Diags on test set")
+    n_total = len(y_te_beh_labeled)
+    n_misclassified = np.sum(preds_xgb != y_te_beh_labeled)
+    frac_misclassified = n_misclassified / n_total
+    print(f"Misclassified frames: {n_misclassified} / {n_total} ({frac_misclassified:.2%})")
+
+    fp = np.sum((preds_xgb  == 1) & (y_te_beh_labeled == 0))
+    fn = np.sum((preds_xgb  == 0) & (y_te_beh_labeled == 1))
+    print(f"False Positives: {fp} ({fp/n_total:.2%})")
+    print(f"False Negatives: {fn} ({fn/n_total:.2%})")
 
     # HMM CBW configuration
     SMOOTH_GAUSSIAN = False
