@@ -343,9 +343,8 @@ def _plot_mean_curve(ax, curves, recall_grid, color, linestyle, label,
 
     ax.plot(recall_grid, mean_p, color=color, lw=1.0, linestyle=linestyle, label=label)
 
-    # Threshold marker (averaged across runs)
     if thr_points:
-        thr_points = np.array(thr_points)  # shape: (n_runs, 2) -> (prec, rec)
+        thr_points = np.array(thr_points)
         mean_prec = np.nanmean(thr_points[:, 0])
         mean_rec = np.nanmean(thr_points[:, 1])
         if np.isfinite(mean_prec) and np.isfinite(mean_rec):
@@ -383,7 +382,6 @@ def _plot_baseline_on_ax(ax, baseline_info, label_suffix="Baseline (16.67%)"):
         lw=1.2,
         linestyle='-',
         label="_baseline_"
-        # label=f"{label_suffix} (AP={ap:.3f})"
     )
 
     if np.isfinite(thr_prec) and np.isfinite(thr_rec):
@@ -426,9 +424,7 @@ def _format_prc_axis(ax, axis_mode="tight"):
 
 def plot_pr(ax, y, p, label, color, variant,
             show_thresh=True, show_f1=False, threshold=0.5):
-    """
-    Single PR curve helper (no averaging).
-    """
+    """Single PR curve helper"""
     precision, recall, _ = precision_recall_curve(y, p)
     ap = average_precision_score(y, p)
 
@@ -472,6 +468,7 @@ def plot_pr(ax, y, p, label, color, variant,
             linewidth=0.6
         )
     return ax
+
 
 def _make_three_panel_figure(vstack=False):
     """Create vertical or horizontal aligned three panel figure"""
@@ -1077,6 +1074,13 @@ def plot_bout_duration_histogram(df, skip_behaviors=None, save_path=None):
 
 def plot_bout_duration_box(df, skip_behaviors=None, save_path=None):
     """Plots bout duration box plot by behavior."""
+
+    BEHAVIOR_COLORS = {
+        "other": NATURE_COLORS[0],
+        "attack": NATURE_COLORS[1],
+        "investigation": NATURE_COLORS[2],
+        "mount": NATURE_COLORS[3],
+    }
     if skip_behaviors:
         df = df[~df.index.isin(skip_behaviors)]  # filter df where skip_behaviors
     if df.empty:
@@ -1103,8 +1107,10 @@ def plot_bout_duration_box(df, skip_behaviors=None, save_path=None):
         boxprops=dict(color="black")
     )
 
-    for patch in ax.artists:
-        patch.set_facecolor(NATURE_COLORS[0])
+    for patch, tick in zip(ax.artists, ax.get_xticklabels()):
+        beh = tick.get_text()
+        if beh in BEHAVIOR_COLORS:
+            patch.set_facecolor(BEHAVIOR_COLORS[beh])
 
     # Center x-tick labels
     plt.xticks(rotation=0, ha="center")

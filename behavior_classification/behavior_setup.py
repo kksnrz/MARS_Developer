@@ -152,8 +152,16 @@ def summarize_annotation_split(project, do_bar=False):
     if do_bar:
         fig, ax = plt.subplots(3, 1, figsize=[15, 15])
     else:
-        fig, ax = plt.subplots(1, 3, figsize=[15, 5])
-    for idx, key in enumerate(['train', 'test', 'val']):
+        fig, ax = plt.subplots(1, 3, figsize=[10, 4])
+
+    NATURE_COLORS = {
+            "mount": "#C44E52",
+            "investigation": "#55A868",
+            "attack": "#DD8452",
+            "other": "#4C72B0",
+        }
+
+    for idx, key in enumerate(['train', 'val', 'test']):
         if 'other' in behavior_time[key].keys():
             sizes = [behavior_time[key]['other']]
             labels = ['other']
@@ -171,14 +179,22 @@ def summarize_annotation_split(project, do_bar=False):
                 labels.append(beh)
                 explode.append(0)
 
+        colors = [NATURE_COLORS.get(l, "#8172B3") for l in labels]
+
         if do_bar:
             ax[idx].bar(labels[1:], sizes[1:])
             ax[idx].tick_params(axis='x', labelrotation = 90)
         else:
-            ax[idx].pie(sizes, explode=explode, labels=labels, autopct='%1.1f%%', startangle=90)
+            ax[idx].pie(sizes, explode=explode, labels=None,
+                        colors=colors, autopct='%1.1f%%', startangle=90)
             ax[idx].axis('equal')
-        ax[idx].title.set_text(key)
-    fig.suptitle('Behaviors observed in train/test/validation sets')
+        ax[idx].title.set_text(key.capitalize())
+    fig.legend(labels=['other','attack','investigation','mount'],
+           loc='lower center', ncol=4, bbox_to_anchor=(0.5, 0.0))
+    fig.suptitle('Observed Behavior Split in Training, Validation, Test Sets')
+    fig.subplots_adjust(bottom=0.22)
+    plt.tight_layout(rect=[0, 0.06, 1, 1])
+    # fig.savefig("./dataset_split.pdf", dpi=300, facecolor='white', edgecolor='white')
     plt.show()
     print('list of all observed annotations:')
     print(master_keys)
