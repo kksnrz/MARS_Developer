@@ -542,7 +542,7 @@ def do_train_smooth(beh_classifier,
                                n_bins=clf_params['n_bins'])
 
     # ----------------------------------------------------------------------------------------------
-    # constrained Baum-Welch training + FBS smoothing (semi supervised branch)
+    # constrained Baum-Welch training (semi supervised branch)
     print(f"Labeled frames count (0, 1): {(y_tr_beh_partial != -1).sum()}, Unlabeled frames count (-1): {(y_tr_beh_partial == -1).sum()}")
     print("Unique labels:", np.unique(y_tr_beh_partial))
 
@@ -599,8 +599,7 @@ def do_train_smooth(beh_classifier,
                                                            beh_name)
 
     # ----------------------------------------------------------------------------------------------
-    # original HMM MARS + FBS smoothing (fully supervised branch)
-    # do hmm
+    # original HMM MARS (fully supervised branch)
     if (verbose):
         print('MARS: fitting HMM smoother...')
     hmm_bin = hmm.MultinomialHMM(n_components=2,

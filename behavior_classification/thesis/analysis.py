@@ -397,10 +397,55 @@ def _plot_baseline_on_ax(ax, baseline_info, label_suffix="Baseline (16.67%)"):
             label="_nolegend_"
         )
 
-
-def _format_prc_axis(ax, axis_mode="tight"):
+def _format_prc_axis(ax, axis_mode="tight", behavior=None):
     ax.set_xlabel("Recall", fontsize=11)
     ax.set_ylabel("Precision", fontsize=11)
+
+    #dirty implementation of x/y limits and ticks for thesis diagrams
+    beh_cfg = {}
+    # # 1.67% x/y limits and ticks
+    # beh_cfg = {
+    #     "attack": {
+    #         "xlim": (0.7, 1),
+    #         "ylim": (0.55, 0.9),
+    #         "xticks": [0.7, 0.75, 0.8, 0.85, 0.9, 0.95],
+    #         "yticks": [0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9],
+    #     },
+    #     "investigation": {
+    #         "xlim": (0.50, 0.92),
+    #         "ylim": (0.60, 0.95),
+    #         "xticks": [0.5, 0.55, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9],
+    #         "yticks": [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95],
+    #     },
+    #     "mount": {
+    #         "xlim": (0.79, 0.99),
+    #         "ylim": (0.79, 1.0),
+    #         "xticks": [0.8, 0.85, 0.9, 0.95],
+    #         "yticks": [0.8, 0.85, 0.9, 0.95, 1.0],
+    #     },
+    # }
+
+    # # 6.67% x/y limits and ticks    
+    # beh_cfg = {
+    #     "attack": {
+    #         "xlim": (0.79, 0.99),
+    #         "ylim": (0.5, 0.92),
+    #         "xticks": [0.8, 0.85, 0.9, 0.95],
+    #         "yticks": [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9],
+    #     },
+    #     "investigation": {
+    #         "xlim": (0.58, 0.92),
+    #         "ylim": (0.60, 0.95),
+    #         "xticks": [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9],
+    #         "yticks": [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95],
+    #     },
+    #     "mount": {
+    #         "xlim": (0.85, 0.99),
+    #         "ylim": (0.85, 1.0),
+    #         "xticks": [0.8, 0.85, 0.9, 0.95],
+    #         "yticks": [0.8, 0.85, 0.9, 0.95, 1.0],
+    #     },
+    # }
 
     if axis_mode == "zoom":
         ax.set_xlim(0.5, 1.0)
@@ -417,6 +462,17 @@ def _format_prc_axis(ax, axis_mode="tight"):
         ax.set_ylim(0.0, 1.0)
         ax.set_xticks([0.0, 0.25, 0.5, 0.75, 1.0])
         ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
+
+    cfg = beh_cfg.get(behavior, None)
+    if cfg:
+        if "xlim" in cfg:
+            ax.set_xlim(*cfg["xlim"])
+        if "ylim" in cfg:
+            ax.set_ylim(*cfg["ylim"])
+        if "xticks" in cfg:
+            ax.set_xticks(cfg["xticks"])
+        if "yticks" in cfg:
+            ax.set_yticks(cfg["yticks"])
 
     ax.tick_params(labelsize=8)
     ax.grid(True, linestyle='--', alpha=0.3, linewidth=0.5)
@@ -857,7 +913,8 @@ def plot_avg_prc_across_strats_for_pct(base_path,
 
         ax.set_title(beh.capitalize(), fontsize=10)
         ax.set_aspect('auto')
-        _format_prc_axis(ax, axis_mode=axis_mode)
+
+        _format_prc_axis(ax, axis_mode=axis_mode, behavior=beh)
 
     fig.suptitle(f"Avg. Precision-Recall ({float(pct)*100:.2f}%, varying strategies)",
                  fontsize=12)
@@ -868,7 +925,7 @@ def plot_avg_prc_across_strats_for_pct(base_path,
         fig.savefig(save_path, dpi=300)
         print(f"Saved to {save_path}")
 
-    # plt.show()
+    plt.show()
 
 
 def plot_f1_vs_pct(base_path,
@@ -961,8 +1018,14 @@ def plot_f1_vs_pct(base_path,
 
         ax.set_title(beh.capitalize(), fontsize=11)
         ax.set_ylabel("F1 Score", fontsize=11)
-        ax.set_ylim(0.50, 1.0)
-        ax.grid(True, linestyle="--", alpha=0.35, linewidth=0.4)
+        # ax.set_ylim(0.65, 0.96)
+        ylims = [(0.68, 0.851), (0.62, 0.825), (0.825, 0.96)]
+        yticks = [[0.70, 0.75, 0.80, 0.85],
+                  [0.65, 0.70, 0.75, 0.80],
+                [0.85, 0.90, 0.95],]
+        ax.set_ylim(*ylims[b_idx])
+        ax.set_yticks(yticks[b_idx])
+        ax.grid(True, axis="y", linestyle="--", alpha=0.7, linewidth=0.4)
         ax.set_xticks(pcts_float)
         ax.set_xticklabels(xtick_labels)
 
@@ -1362,43 +1425,43 @@ if __name__ == "__main__":
         f"{DIR_PREFIX}_baseline_1pct_20251119_102858"
     )
 
-    plot_bout_summary()
+    # plot_bout_summary()
 
-    for strat in STRATS:
-    #     # aggregate_metrics_across_runs(run_parent_folder=f"{BASE_PATH}/{strat}")
-        for pct in PCTS:
-    #         # # 1) Exact PRC for a specific run
-    #         # plot_pr_curves(
-    #         #     base_path=BASE_PATH,
-    #         #     strats=[strat],
-    #         #     pcts=[pct],
-    #         #     behaviors=BEHAVIORS,
-    #         #     exact_folder=None,      # or an explicit run dir
-    #         #     save_figs=True,
-    #         #     baseline_run_dir=baseline_run_dir,
-    #         #     axis_mode="zoom",
-    #         #     # vstack=True
-    #         # )
-    #         plot_pr_curves_all_runs(
-    #                     base_path=BASE_PATH,
-    #                     strat=strat,
-    #                     pct=pct,
-    #                     behaviors=BEHAVIORS,
-    #                     save_figs=True,
-    #                     baseline_run_dir=baseline_run_dir,
-    #                     axis_mode="zoom")
+    # for strat in STRATS:
+    # #     # aggregate_metrics_across_runs(run_parent_folder=f"{BASE_PATH}/{strat}")
+    #     for pct in PCTS:
+    # #         # # 1) Exact PRC for a specific run
+    # #         # plot_pr_curves(
+    # #         #     base_path=BASE_PATH,
+    # #         #     strats=[strat],
+    # #         #     pcts=[pct],
+    # #         #     behaviors=BEHAVIORS,
+    # #         #     exact_folder=None,      # or an explicit run dir
+    # #         #     save_figs=True,
+    # #         #     baseline_run_dir=baseline_run_dir,
+    # #         #     axis_mode="zoom",
+    # #         #     # vstack=True
+    # #         # )
+    # #         plot_pr_curves_all_runs(
+    # #                     base_path=BASE_PATH,
+    # #                     strat=strat,
+    # #                     pct=pct,
+    # #                     behaviors=BEHAVIORS,
+    # #                     save_figs=True,
+    # #                     baseline_run_dir=baseline_run_dir,
+    # #                     axis_mode="zoom")
 
-            # 2) Avg PRC for one strat & one pct
-            plot_avg_prc_for_strat(
-                base_path=BASE_PATH,
-                behaviors=BEHAVIORS,
-                strat=strat,
-                pct=pct,
-                baseline_run_dir=baseline_run_dir,
-                axis_mode="zoom",
-                save_path=os.path.join(BASE_PATH, strat, pct, f"avg_prc_for_{strat}_{pct}.pdf"),
-                vstack=True
-            )
+    #         # 2) Avg PRC for one strat & one pct
+    #         plot_avg_prc_for_strat(
+    #             base_path=BASE_PATH,
+    #             behaviors=BEHAVIORS,
+    #             strat=strat,
+    #             pct=pct,
+    #             baseline_run_dir=baseline_run_dir,
+    #             axis_mode="zoom",
+    #             save_path=os.path.join(BASE_PATH, strat, pct, f"avg_prc_for_{strat}_{pct}.pdf"),
+    #             vstack=True
+    #         )
 
     #     # 3) Avg PRC for one strat across pcts
     #     plot_avg_prc_across_pcts_for_strat(
@@ -1412,18 +1475,18 @@ if __name__ == "__main__":
     #         vstack=True
     #     )
 
-    # # 4) Avg PRC for one pct across strats
-    # for pct in PCTS:
-    #     plot_avg_prc_across_strats_for_pct(
-    #         base_path=BASE_PATH,
-    #         behaviors=BEHAVIORS,
-    #         pct=pct,
-    #         strats=STRATS,
-    #         baseline_run_dir=baseline_run_dir,
-    #         axis_mode="zoom",
-    #         save_path=os.path.join(BASE_PATH, f"avg_prc_for_{pct}.pdf"),
-    #         vstack=True
-    #             )
+    # 4) Avg PRC for one pct across strats
+    for pct in PCTS:
+        plot_avg_prc_across_strats_for_pct(
+            base_path=BASE_PATH,
+            behaviors=BEHAVIORS,
+            pct=pct,
+            strats=STRATS,
+            baseline_run_dir=baseline_run_dir,
+            axis_mode="zoom",
+            save_path=os.path.join(BASE_PATH, f"avg_prc_for_{pct}.pdf"),
+            vstack=True
+                )
 
     plot_f1_vs_pct(
         base_path=BASE_PATH,
