@@ -5,7 +5,7 @@ This repository contains all the code you'll need to train your own version of M
 ## Installation
 To set up your GPU to run tensorflow, follow the "Setting up your GPU for Tensorflow" section of the instructions from the end-user version of MARS, followed **steps 1-2** of the instructions to install conda: [for Linux](https://github.com/neuroethology/MARS/blob/master/docs/install_linux_nvidia.md#setting-up-your-gpu-for-tensorflow) | [for Windows](https://github.com/neuroethology/MARS/blob/master/docs/install_windows_nvidia.md#setting-up-your-gpu-for-tensorflow)
 
-Next, clone this Github repository + submodules with the call
+Next, clone this Github repository + submodules with the call (or skip if code is already present)
 ```
 git clone --recurse-submodules https://github.com/kksnrz/MARS_Developer
 ```
