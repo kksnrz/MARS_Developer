@@ -1416,64 +1416,62 @@ if __name__ == "__main__":
     BEHAVIORS = ["attack", "investigation", "mount"]
 
     STRATS = ["natural", "simple_random", "stratified", "systematic", "cluster", "purposive"]
-    # STRATS = ["natural", "simple_random", "stratified", "systematic", "cluster", "purposive"]
     PCTS = ['0.01667','0.03334', '0.06668', '0.13336']
-    # PCTS = ['0.01667', '0.03334', '0.06668', '1']
 
     baseline_run_dir = (
         f"{BASE_PATH}/baseline/1/"
         f"{DIR_PREFIX}_baseline_1pct_20251119_102858"
     )
 
-    # plot_bout_summary()
+    plot_bout_summary()
 
-    # for strat in STRATS:
-    # #     # aggregate_metrics_across_runs(run_parent_folder=f"{BASE_PATH}/{strat}")
-    #     for pct in PCTS:
-    # #         # # 1) Exact PRC for a specific run
-    # #         # plot_pr_curves(
-    # #         #     base_path=BASE_PATH,
-    # #         #     strats=[strat],
-    # #         #     pcts=[pct],
-    # #         #     behaviors=BEHAVIORS,
-    # #         #     exact_folder=None,      # or an explicit run dir
-    # #         #     save_figs=True,
-    # #         #     baseline_run_dir=baseline_run_dir,
-    # #         #     axis_mode="zoom",
-    # #         #     # vstack=True
-    # #         # )
-    # #         plot_pr_curves_all_runs(
-    # #                     base_path=BASE_PATH,
-    # #                     strat=strat,
-    # #                     pct=pct,
-    # #                     behaviors=BEHAVIORS,
-    # #                     save_figs=True,
-    # #                     baseline_run_dir=baseline_run_dir,
-    # #                     axis_mode="zoom")
+    for strat in STRATS:
+        # aggregate_metrics_across_runs(run_parent_folder=f"{BASE_PATH}/{strat}")
+        for pct in PCTS:
+            # 1) Exact PRC for a specific run
+            plot_pr_curves(
+                base_path=BASE_PATH,
+                strats=[strat],
+                pcts=[pct],
+                behaviors=BEHAVIORS,
+                exact_folder=None,      # or an explicit run dir
+                save_figs=True,
+                baseline_run_dir=baseline_run_dir,
+                axis_mode="zoom",
+                # vstack=True
+            )
+            plot_pr_curves_all_runs(
+                        base_path=BASE_PATH,
+                        strat=strat,
+                        pct=pct,
+                        behaviors=BEHAVIORS,
+                        save_figs=True,
+                        baseline_run_dir=baseline_run_dir,
+                        axis_mode="zoom")
 
-    #         # 2) Avg PRC for one strat & one pct
-    #         plot_avg_prc_for_strat(
-    #             base_path=BASE_PATH,
-    #             behaviors=BEHAVIORS,
-    #             strat=strat,
-    #             pct=pct,
-    #             baseline_run_dir=baseline_run_dir,
-    #             axis_mode="zoom",
-    #             save_path=os.path.join(BASE_PATH, strat, pct, f"avg_prc_for_{strat}_{pct}.pdf"),
-    #             vstack=True
-    #         )
+            # 2) Avg PRC for one strat & one pct
+            plot_avg_prc_for_strat(
+                base_path=BASE_PATH,
+                behaviors=BEHAVIORS,
+                strat=strat,
+                pct=pct,
+                baseline_run_dir=baseline_run_dir,
+                axis_mode="zoom",
+                save_path=os.path.join(BASE_PATH, strat, pct, f"avg_prc_for_{strat}_{pct}.pdf"),
+                vstack=True
+            )
 
-    #     # 3) Avg PRC for one strat across pcts
-    #     plot_avg_prc_across_pcts_for_strat(
-    #         base_path=BASE_PATH,
-    #         behaviors=BEHAVIORS,
-    #         strat=strat,
-    #         pcts=PCTS,
-    #         baseline_run_dir=baseline_run_dir,
-    #         axis_mode="zoom",
-    #         save_path=os.path.join(BASE_PATH, strat, f"avg_prc_for_{strat}.pdf"),
-    #         vstack=True
-    #     )
+        # 3) Avg PRC for one strat across pcts
+        plot_avg_prc_across_pcts_for_strat(
+            base_path=BASE_PATH,
+            behaviors=BEHAVIORS,
+            strat=strat,
+            pcts=PCTS,
+            baseline_run_dir=baseline_run_dir,
+            axis_mode="zoom",
+            save_path=os.path.join(BASE_PATH, strat, f"avg_prc_for_{strat}.pdf"),
+            vstack=True
+        )
 
     # 4) Avg PRC for one pct across strats
     for pct in PCTS:
@@ -1496,4 +1494,3 @@ if __name__ == "__main__":
         save_path=os.path.join(BASE_PATH, "F1_strats_pcts.pdf"),
         baseline_f1={"attack":0.841, "investigation":0.815, "mount":0.952}
         )
-    
